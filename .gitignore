@@ -1,0 +1,32 @@
+# Dependencies and generated output
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Private workspace data, credentials and backups
+.local/
+.env*
+!.env.example
+ai-config.json
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+backups/
+daily-backups/
+*.tgz
+*.log
+*.pem
+*.key
+
+# Local screenshots / browser test output (may contain user data)
+artifacts/
+test-results/
+playwright-report/
+
+# Machine-specific launchers and desktop metadata
+*.desktop
+.directory
+.DS_Store
+Thumbs.db
