@@ -354,6 +354,7 @@ test("执行面板展示失败原因、可重试并保存结果，也能取消�
     await expect(page.locator(".run-list")).toContainText("失败");
     await page.locator(".run-main").first().click();
     mode = "success";
+    page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "重新执行", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "重新执行后的选题" }),
@@ -396,5 +397,52 @@ test("执行面板展示失败原因、可重试并保存结果，也能取消�
   } finally {
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(r));
+  }
+});
+
+test("另一设备完成成果后知识同步一致，浏览/刷新不会额外写库", async ({
+  page,
+  browser,
+}) => {
+  await page.goto(desktop);
+  await settle(page);
+  const second = await browser.newPage();
+  try {
+    await second.goto(desktop);
+    await settle(second);
+    await openTask(second);
+    await second.getByRole("button", { name: "验收通过", exact: true }).click();
+    await settle(second);
+    const snap = await (await fetch(desktop + "/api/workspace")).json();
+    const note = snap.state.knowledge.find(
+      (n: { sourceTaskId?: string }) => n.sourceTaskId === "demo-task-5",
+    );
+    expect(note).toBeTruthy();
+    await expect
+      .poll(
+        async () =>
+          (await localCache(page)).knowledge.find(
+            (n: { sourceTaskId?: string }) => n.sourceTaskId === "demo-task-5",
+          )?.content,
+      )
+      .toBe(note.content);
+    await page.reload();
+    await settle(page);
+    expect(
+      (await (await fetch(desktop + "/api/workspace")).json()).revision,
+    ).toBe(snap.revision);
+    await openTask(second);
+    await second.getByLabel("任务状态").selectOption("todo");
+    await second.getByRole("button", { name: "保存任务", exact: true }).click();
+    await settle(second);
+    await expect
+      .poll(async () =>
+        (await localCache(page)).knowledge.some(
+          (n: { sourceTaskId?: string }) => n.sourceTaskId === "demo-task-5",
+        ),
+      )
+      .toBe(false);
+  } finally {
+    await second.close();
   }
 });

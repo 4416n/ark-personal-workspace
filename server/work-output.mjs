@@ -8,7 +8,9 @@ export function generationMessages(
 ) {
   const contract = taskContract(task);
   const sources = retrieve(
-    knowledge || [],
+    (knowledge || []).filter(
+      (note) => !task.id || note.sourceTaskId !== task.id,
+    ),
     `${task.title} ${task.description}`,
     project.id,
   );
@@ -36,7 +38,9 @@ export function generationMessages(
 export function reviewMessages({ task, project, knowledge }) {
   const contract = taskContract(task);
   const sources = retrieve(
-    knowledge || [],
+    (knowledge || []).filter(
+      (note) => !task.id || note.sourceTaskId !== task.id,
+    ),
     `${task.title} ${task.description}`,
     project.id,
   );

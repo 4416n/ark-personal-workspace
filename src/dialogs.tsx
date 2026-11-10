@@ -133,12 +133,7 @@ import { FileCode2 } from "lucide-react";
 import { SoftwarePanel, softwareConfirmation } from "./software-ui";
 
 type ProjectTaskView =
-  | "software"
-  | "auto"
-  | "list"
-  | "route"
-  | "retro"
-  | "catalog";
+  "software" | "auto" | "list" | "route" | "retro" | "catalog";
 
 function DeliverableIndex({
   tasks,
@@ -171,6 +166,8 @@ function DeliverableIndex({
             <small>
               {members.find((member) => member.id === task.ownerId)?.name ||
                 "未分配"}
+              {" · "}
+              {task.status === "done" ? "已完成" : "未验收草稿"}
               {" · "}
               {resultPreview(task.result, 140) || "已写好交付正文"}
             </small>
@@ -327,7 +324,7 @@ function NewProject({
       !confirm(
         deliveryType === "software"
           ? softwareConfirmation(title, 1)
-          : "创建后立即自动执行这份计划？\n\n将使用你配置的模型，按依赖生成成果、独立审查；通过则自动完成任务并继续。每项最多返工 1 次，本批总调用上限 30 次。生成、审查及失败尝试均计入，可能产生费用。\n\n需要真实外部操作的任务会停下，不会发布或运行代码。关闭页面仍会继续，服务停止则暂停。可在项目中随时暂停。",
+          : "创建后立即自动执行这份计划？\n\n将使用你配置的模型，按依赖生成成果、独立审查；通过则自动完成任务并继续。每项最多返工 1 次，本批总调用上限 30 次。生成、续写、审查及失败尝试均计入，可能产生费用。\n\n需要真实外部操作的任务会停下，不会发布或运行代码。关闭页面仍会继续，服务停止则暂停。可在项目中随时暂停。",
       )
     )
       return;
@@ -726,6 +723,7 @@ function ProjectDetail({
   const tasks = state.tasks.filter((t) => t.projectId === id);
   const progress = projectProgress(p, tasks);
   const readyToClose =
+    p.deliveryType !== "software" &&
     tasks.length > 0 &&
     tasks.every((task) => task.status === "done") &&
     p.status !== "done";
@@ -737,7 +735,7 @@ function ProjectDetail({
     );
   const exportZip = () =>
     downloadBytes(
-      `${safeFileName(p.title)}-成果.zip`,
+      `${safeFileName(p.title)}-任务文档.zip`,
       zipStore(deliverableFiles(p, tasks, state.members)),
       "application/zip",
     );
@@ -920,7 +918,8 @@ function ProjectDetail({
             <div>
               <strong>全部任务已完成</strong>
               <p>
-                成果已经写在任务里。可以先复盘、导出，再把项目标为完成。
+                请核对实际成果、验收记录与整体目标，再标记项目完成。文档 ZIP
+                不含可运行工程。
               </p>
             </div>
             <div className="closeout-actions">
@@ -934,7 +933,7 @@ function ProjectDetail({
                 导出总文档
               </button>
               <button className="button" onClick={exportZip}>
-                导出成果 ZIP
+                导出任务文档 ZIP
               </button>
               <button
                 className="button primary"
@@ -1088,16 +1087,13 @@ function ProjectDetail({
         >
           保存为流程模板
         </button>
-        <button
-          className="button"
-          onClick={exportDocument}
-        >
+        <button className="button" onClick={exportDocument}>
           <Download size={16} />
           导出任务文档
         </button>
         <button className="button" onClick={exportZip}>
           <Download size={16} />
-          导出成果 ZIP
+          导出任务文档 ZIP
         </button>
       </footer>
     </Modal>
@@ -1244,9 +1240,8 @@ function TaskDetail({
       return;
     }
     if (
-      task.result &&
       !window.confirm(
-        "当前成果会留存为历史版本，新成果生成后需要重新验收。继续生成？",
+        `${task.result ? "当前成果会留存为历史版本，新成果需要重新验收。\n\n" : ""}使用已配置模型生成交付物？长文截断时自动续写，最多 4 次调用，单次输出上限 6000 tokens，可能产生费用。项目、任务和检索资料会发送给该模型；可以随时取消。`,
       )
     )
       return;
@@ -1257,6 +1252,7 @@ function TaskDetail({
         content: string;
         sources?: Passage[];
       }>("/execute", {
+        maxParts: 4,
         task: {
           id: task.id,
           title: task.title,
@@ -1972,7 +1968,7 @@ function MemberDetail({ id, close }: { id?: string; close: () => void }) {
 }
 
 function KnowledgeDetail({ id, close }: { id?: string; close: () => void }) {
-  const { state, update, notify } = useApp();
+  const { state, update, notify, open } = useApp();
   const original = state.knowledge.find((k) => k.id === id);
   const [note, setNote] = useState<Knowledge>(
     () =>
@@ -1985,6 +1981,33 @@ function KnowledgeDetail({ id, close }: { id?: string; close: () => void }) {
       },
   );
   const [preview, setPreview] = useState(false);
+  if (original?.sourceTaskId)
+    return (
+      <Modal
+        wide
+        title="已完成任务成果"
+        subtitle="自动同步的只读副本；修改或重开来源任务后同步更新。"
+        onClose={close}
+      >
+        <div className="modal-body">
+          <h2>{original.title}</h2>
+          <div className="markdown">
+            <ReactMarkdown>{original.content}</ReactMarkdown>
+          </div>
+        </div>
+        <footer className="modal-footer">
+          <button className="button" onClick={close}>
+            关闭
+          </button>
+          <button
+            className="button primary"
+            onClick={() => open({ type: "task", id: original.sourceTaskId })}
+          >
+            查看来源任务
+          </button>
+        </footer>
+      </Modal>
+    );
   return (
     <Modal
       wide

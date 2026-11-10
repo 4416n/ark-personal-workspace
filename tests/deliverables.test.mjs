@@ -28,7 +28,13 @@ test("成果包包含总文档和各任务正文，ZIP 可按文件名读回", (
       result: "# 规范\n\n第一条",
       resultMeta: { id: "v", number: 1 },
     },
-    { title: "空任务", status: "done", ownerId: "a", description: "", result: "  " },
+    {
+      title: "空任务",
+      status: "done",
+      ownerId: "a",
+      description: "",
+      result: "  ",
+    },
   ];
   const files = deliverableFiles(project, tasks, [{ id: "a", name: "小策" }]);
   assert.deepEqual(
@@ -44,4 +50,35 @@ test("成果包包含总文档和各任务正文，ZIP 可按文件名读回", (
   assert.match(text, /00-总文档\.md/);
   assert.match(text, /01-需求规范\.md/);
   assert.match(text, /第一条/);
+});
+
+test("真实解压校验 CRC、中文文件名与逐个正文，草稿明确标注", async (t) => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const { execFileSync } = await import("node:child_process");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-deliverables-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const files = deliverableFiles({ title: "目录", goal: "测试" }, [
+    {
+      title: "中文/正文",
+      result: "原样正文\n\n✨",
+      ownerId: "",
+      status: "review",
+      description: "任务",
+    },
+  ]);
+  assert.match(files[1].content, /未验收草稿/);
+  const zip = path.join(dir, "files.zip");
+  await fs.writeFile(zip, zipStore(files));
+  assert.match(
+    execFileSync("unzip", ["-t", zip], { encoding: "utf8" }),
+    /No errors/,
+  );
+  execFileSync("unzip", ["-q", zip, "-d", path.join(dir, "out")]);
+  for (const file of files)
+    assert.equal(
+      await fs.readFile(path.join(dir, "out", file.name), "utf8"),
+      file.content,
+    );
 });

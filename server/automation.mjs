@@ -13,7 +13,6 @@ import {
   parseReview,
 } from "./work-output.mjs";
 import { completeLongForm } from "./long-form.mjs";
-import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 
 const inputSchema = z.object({
   confirmed: z.literal(true),
@@ -137,10 +136,7 @@ export function projectAutomation({
         ...state.activity,
       ].slice(0, 100),
     };
-    database.save(
-      syncDeliveredKnowledge(drafted),
-      latest.snapshot.revision,
-    );
+    database.save(drafted, latest.snapshot.revision);
   }
   function blocked(job, task, state) {
     if (task.status === "done") return "";
@@ -252,14 +248,17 @@ export function projectAutomation({
                       if (part > 1) {
                         if (job.usedCalls >= job.maxCalls)
                           throw fail(
-                            "已到达本批调用上限；已保留成果。提高总上限并确认恢复，或改为人工处理",
+                            "续写已到达本批调用上限；当前截断草稿未保存为交付物，原有成果不变。提高总上限并确认恢复，或缩小任务范围",
                           );
                         job.usedCalls++;
                       }
                       job.progress = { part, parts, phase: "generate" };
-                      save(job, `分段撰写 ${part}/${parts}：${task.title}`);
+                      save(
+                        job,
+                        `撰写第 ${part} 段（最多 ${parts} 次调用）：${task.title}`,
+                      );
                       req.run.progress = {
-                        label: `分段撰写 ${part}/${parts}`,
+                        label: `正在撰写第 ${part} 段（最多 ${parts} 次调用，非完成百分比）`,
                         part,
                         parts,
                       };

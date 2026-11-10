@@ -37,7 +37,7 @@ export async function api<T>(
               ...(runId ? { "X-Run-Id": runId } : {}),
             },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(100000),
+      signal: AbortSignal.timeout(path === "/execute" ? 380000 : 100000),
     });
     const data = await response.json().catch(() => ({
       error: "服务返回了无效响应，请检查本地服务是否正在运行。",

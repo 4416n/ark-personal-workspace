@@ -45,6 +45,7 @@ export function GenerationProgress({ endpoint }: { endpoint: string }) {
     parts: number;
   }>();
   useEffect(() => {
+    setProgress(undefined);
     if (!id) return;
     let alive = true;
     const tick = () =>
@@ -63,14 +64,9 @@ export function GenerationProgress({ endpoint }: { endpoint: string }) {
     };
   }, [id]);
   if (!id) return null;
-  const part = progress?.part || 1;
-  const parts = Math.max(1, progress?.parts || 4);
   return (
     <div className="generation-progress" role="status">
       <span>{progress?.label || "正在生成，长文会自动分段续写"}</span>
-      <div className="progress-track">
-        <span style={{ width: `${Math.min(100, (part / parts) * 100)}%` }} />
-      </div>
     </div>
   );
 }
@@ -126,6 +122,8 @@ type Run = {
   status: string;
   error?: string;
   usage?: { input: number; output: number; total: number } | null;
+  calls?: number;
+  usageIncomplete?: boolean;
   sources: Passage[];
   endpoint: string;
   input?: Record<string, unknown>;
@@ -169,6 +167,13 @@ export function RunsPage() {
       !selected?.input ||
       retrying ||
       !["/execute", "/plan", "/chat", "/test"].includes(selected.endpoint)
+    )
+      return;
+    if (
+      selected.endpoint === "/execute" &&
+      !window.confirm(
+        `重新生成交付物？最多 ${Number(selected.input.maxParts) || 1} 次模型调用（含续写），会消耗额度；结果只保存在执行记录。`,
+      )
     )
       return;
     setRetrying(true);
@@ -267,7 +272,9 @@ export function RunsPage() {
                 <span>
                   {elapsed(r)}
                   <small>
-                    {r.usage ? `${r.usage.total} tokens` : "用量未返回"}
+                    {r.usage
+                      ? `${r.usageIncomplete ? "已知用量 " : ""}${r.usage.total} tokens`
+                      : "用量未返回"}
                   </small>
                 </span>
               </button>
@@ -307,9 +314,13 @@ export function RunsPage() {
               <span>{elapsed(selected)}</span>
             </div>
             <p className="field-hint">
+              {selected.calls ? `调用尝试 ${selected.calls} 次 · ` : ""}
               {selected.usage
                 ? `输入 ${selected.usage.input} / 输出 ${selected.usage.output} / 合计 ${selected.usage.total} tokens`
                 : "服务商未返回用量，不估算费用。"}
+              {selected.usageIncomplete &&
+                selected.usage &&
+                "（部分调用未返回用量，以上不是完整总量）"}
             </p>
             {selected.error && (
               <div className="alert error">{selected.error}</div>

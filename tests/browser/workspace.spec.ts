@@ -202,6 +202,10 @@ test("AI 成果保存为待验收，刷新后保留且可人工通过", async ({
   ).toBeVisible();
   expect(calls).toBe(0);
   await page.getByLabel("预估工时（小时）").fill("4");
+  page.once("dialog", (d) => {
+    expect(d.message()).toContain("最多 4 次调用");
+    return d.accept();
+  });
   await page.getByRole("button", { name: "生成交付物", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "知识库目录方案" }),

@@ -11,11 +11,13 @@ export function resultPreview(text, limit = 96) {
 }
 
 export function safeFileName(name) {
-  return String(name || "未命名")
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80) || "未命名";
+  return (
+    String(name || "未命名")
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80) || "未命名"
+  );
 }
 
 export function deliverableFiles(project, tasks, members = []) {
@@ -24,7 +26,7 @@ export function deliverableFiles(project, tasks, members = []) {
     .filter((task) => task.result?.trim())
     .map((task, index) => ({
       name: `${String(index + 1).padStart(2, "0")}-${safeFileName(task.title)}.md`,
-      content: `# ${task.title}\n\n负责人：${names.get(task.ownerId) || "未分配"}\n\n${task.result}`,
+      content: `# ${task.title}\n\n负责人：${names.get(task.ownerId) || "未分配"}\n\n状态：${task.status === "done" ? "已完成（请核对验收记录）" : "未验收草稿"}\n\n${task.result}`,
     }));
   return [
     { name: "00-总文档.md", content: deliveryMarkdown(project, tasks) },
@@ -39,7 +41,7 @@ function crc32(bytes) {
     for (let bit = 0; bit < 8; bit += 1)
       crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
   }
-  return (~crc) >>> 0;
+  return ~crc >>> 0;
 }
 
 function concat(parts) {
@@ -75,19 +77,29 @@ export function zipStore(files) {
     const name = encoder.encode(file.name);
     const data = encoder.encode(file.content);
     const crc = crc32(data);
+    // Info-ZIP and older extractors can ignore the UTF-8 flag for DOS entries.
+    // Include the Unicode Path extra field for interoperable Chinese filenames.
+    const unicodePath = concat([
+      u16(0x7075),
+      u16(5 + name.length),
+      new Uint8Array([1]),
+      u32(crc32(name)),
+      name,
+    ]);
     const local = concat([
       u32(0x04034b50),
       u16(20),
       u16(0x0800),
       u16(0),
       u16(0),
-      u16(0),
+      u16(0x21),
       u32(crc),
       u32(data.length),
       u32(data.length),
       u16(name.length),
-      u16(0),
+      u16(unicodePath.length),
       name,
+      unicodePath,
       data,
     ]);
     centrals.push(
@@ -98,18 +110,19 @@ export function zipStore(files) {
         u16(0x0800),
         u16(0),
         u16(0),
-        u16(0),
+        u16(0x21),
         u32(crc),
         u32(data.length),
         u32(data.length),
         u16(name.length),
-        u16(0),
+        u16(unicodePath.length),
         u16(0),
         u16(0),
         u16(0),
         u32(0),
         u32(offset),
         name,
+        unicodePath,
       ]),
     );
     offset += local.length;

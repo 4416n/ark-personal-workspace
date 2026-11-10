@@ -46,6 +46,7 @@ const knowledgeSchema = z
       title: z.string().max(200),
       content: z.string().max(100000),
       projectId: z.string().max(100).optional(),
+      sourceTaskId: z.string().max(100).optional(),
     }),
   )
   .max(2000);
@@ -327,6 +328,11 @@ export function createApp({
       throw Object.assign(new Error("请先在工作台设置中配置 API Key。"), {
         status: 400,
       });
+    if (req?.run) {
+      req.run.calls = (req.run.calls || 0) + 1;
+      req.run.usageIncomplete = true;
+      req.saveRun();
+    }
     let response;
     try {
       response = await fetch(
@@ -374,13 +380,27 @@ export function createApp({
       throw new Error("模型服务没有返回有效 JSON。");
     });
     if (req?.run) {
-      req.run.usage = data.usage
-        ? {
-            input: Number(data.usage.prompt_tokens) || 0,
-            output: Number(data.usage.completion_tokens) || 0,
-            total: Number(data.usage.total_tokens) || 0,
-          }
-        : null;
+      if (
+        data.usage &&
+        ["prompt_tokens", "completion_tokens", "total_tokens"].every(
+          (key) =>
+            typeof data.usage[key] === "number" &&
+            Number.isFinite(data.usage[key]) &&
+            data.usage[key] >= 0,
+        )
+      ) {
+        const count = (value) =>
+          Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+        const previous = req.run.usage || { input: 0, output: 0, total: 0 };
+        req.run.usage = {
+          input: previous.input + count(data.usage.prompt_tokens),
+          output: previous.output + count(data.usage.completion_tokens),
+          total: previous.total + count(data.usage.total_tokens),
+        };
+        req.run.usageReportedCalls = (req.run.usageReportedCalls || 0) + 1;
+      }
+      req.run.usageIncomplete =
+        (req.run.usageReportedCalls || 0) < req.run.calls;
       req.saveRun();
     }
     const content = data.choices?.[0]?.message?.content;
@@ -526,7 +546,9 @@ export function createApp({
     runs.track("execute", async (req, res) => {
       const body = z
         .object({
+          maxParts: z.number().int().min(1).max(4).default(1),
           task: z.object({
+            id: z.string().max(100).optional(),
             deliverable: z.string().max(300).optional(),
             acceptanceCriteria: z
               .array(z.string().min(1).max(1000))
@@ -559,14 +581,16 @@ export function createApp({
         })
         .parse(req.body);
       const finish = { reason: "" };
+      const config = await readConfig();
       const content = await completeLongForm(
         completion,
         generationMessages(body, req),
         {
+          parts: body.maxParts,
           finishReason: () => finish.reason,
           onPart: ({ part, parts }) => {
             req.run.progress = {
-              label: `分段撰写 ${part}/${parts}`,
+              label: `正在撰写第 ${part} 段（最多 ${parts} 次调用，非完成百分比）`,
               part,
               parts,
             };
@@ -575,6 +599,7 @@ export function createApp({
           completion: {
             maxTokens: 6000,
             req,
+            config,
             onFinish: (reason) => {
               finish.reason = reason;
             },

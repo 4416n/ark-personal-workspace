@@ -53,7 +53,6 @@ export function useSyncedWorkspace() {
   const stateRef = useRef(state);
   const base = useRef<Snapshot | null>(null);
   const dirty = useRef(false);
-  const knowledgeDirty = useRef(false);
   const running = useRef(false);
   const sessionRef = useRef<Session | null>(null);
   const readyRef = useRef(false);
@@ -83,11 +82,9 @@ export function useSyncedWorkspace() {
     }
   };
   const adopt = (value: Workspace) => {
-    const next = syncDeliveredKnowledge(value);
-    if (next !== value) knowledgeDirty.current = true;
-    stateRef.current = next;
-    setState(next);
-    cache(next);
+    stateRef.current = value;
+    setState(value);
+    cache(value);
   };
   const markConflict = (remote: Snapshot) => {
     conflictRef.current = remote;
@@ -275,12 +272,7 @@ export function useSyncedWorkspace() {
         }
         if (alive) {
           readyRef.current = true;
-          if (knowledgeDirty.current && sessionRef.current?.shared) {
-            dirty.current = true;
-            cachePending();
-          }
           setReady(true);
-          if (knowledgeDirty.current) void pumpRef.current();
         }
       } catch (e) {
         if (alive) setBootError((e as Error).message);
@@ -315,7 +307,9 @@ export function useSyncedWorkspace() {
         ].slice(0, 100),
       };
     }
-    adopt(next);
+    // Never mutate a remote snapshot merely by viewing it. Shared snapshots
+    // are canonicalized on server save; standalone mode does so on local edits.
+    adopt(sessionRef.current?.shared ? next : syncDeliveredKnowledge(next));
     if (sessionRef.current?.shared) {
       dirty.current = true;
       cachePending();
