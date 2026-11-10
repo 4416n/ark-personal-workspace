@@ -25,9 +25,41 @@ export function tokens(text) {
       ].includes(x),
   );
 }
+const concepts = [
+  ["知识库", "资料库", "文档", "笔记", "条目", "检索", "归档"],
+  ["分类", "目录", "主题", "结构"],
+  ["验收", "审查", "标准", "交付"],
+  ["流程", "步骤", "规范"],
+];
+function queryTerms(query) {
+  const base = [...new Set(tokens(query))];
+  const raw = String(query || "").toLowerCase();
+  const extra = [];
+  for (const group of concepts)
+    if (group.some((word) => raw.includes(word)))
+      for (const word of group)
+        if (!raw.includes(word) && !base.includes(word)) extra.push(word);
+  return [...base.map((term) => [term, 1]), ...extra.map((term) => [term, 0.45])].slice(
+    0,
+    100,
+  );
+}
+function bigrams(text) {
+  const grams = new Set();
+  for (const run of String(text || "").toLowerCase().match(/[\u3400-\u9fff]+/g) || [])
+    for (let i = 0; i < run.length - 1; i += 1) grams.add(run.slice(i, i + 2));
+  return grams;
+}
+function overlap(left, right) {
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const gram of left) if (right.has(gram)) shared += 1;
+  return shared / (left.size + right.size - shared);
+}
 export function retrieve(knowledge, query, projectId = "", limit = 6) {
-  const q = [...new Set(tokens(query))].slice(0, 100);
+  const q = queryTerms(query);
   if (!q.length) return [];
+  const queryGrams = bigrams(query);
   const chunks = [];
   for (const note of knowledge.filter(
     (k) => !k.projectId || k.projectId === projectId,
@@ -46,29 +78,32 @@ export function retrieve(knowledge, query, projectId = "", limit = 6) {
         end: start + content.length,
         counts,
         length: terms.length,
+        overlap: overlap(queryGrams, bigrams(`${note.title} ${content}`)),
       });
     }
   }
   const avg =
     chunks.reduce((n, c) => n + c.length, 0) / (chunks.length || 1) || 1;
   const df = new Map(
-    q.map((t) => [t, chunks.filter((c) => c.counts.has(t)).length]),
+    q.map(([term]) => [term, chunks.filter((c) => c.counts.has(term)).length]),
   );
   const ranked = chunks
     .map((c) => {
       let score = 0;
-      for (const t of q) {
-        const tf = c.counts.get(t) || 0;
+      for (const [term, weight] of q) {
+        const tf = c.counts.get(term) || 0;
         if (tf)
           score +=
             (Math.log(
-              1 + (chunks.length - df.get(t) + 0.5) / (df.get(t) + 0.5),
+              1 + (chunks.length - df.get(term) + 0.5) / (df.get(term) + 0.5),
             ) *
               tf *
               2.2) /
-            (tf + 1.2 * (0.25 + (0.75 * c.length) / avg));
+            (tf + 1.2 * (0.25 + (0.75 * c.length) / avg)) *
+            weight;
       }
-      const { counts, length, ...passage } = c;
+      if (c.overlap >= 0.18) score += c.overlap * 3;
+      const { counts, length, overlap: _overlap, ...passage } = c;
       return { ...passage, score: Math.round(score * 100) / 100 };
     })
     .filter((c) => c.score > 0)

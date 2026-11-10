@@ -8,6 +8,7 @@ import {
   type Workspace,
 } from "./domain";
 import { boundWorkspaceHistory } from "./delivery";
+import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 import { mergeWorkspace } from "../shared/merge.mjs";
 
 const KEY = "ark-workspace-v1";
@@ -52,6 +53,7 @@ export function useSyncedWorkspace() {
   const stateRef = useRef(state);
   const base = useRef<Snapshot | null>(null);
   const dirty = useRef(false);
+  const knowledgeDirty = useRef(false);
   const running = useRef(false);
   const sessionRef = useRef<Session | null>(null);
   const readyRef = useRef(false);
@@ -81,9 +83,11 @@ export function useSyncedWorkspace() {
     }
   };
   const adopt = (value: Workspace) => {
-    stateRef.current = value;
-    setState(value);
-    cache(value);
+    const next = syncDeliveredKnowledge(value);
+    if (next !== value) knowledgeDirty.current = true;
+    stateRef.current = next;
+    setState(next);
+    cache(next);
   };
   const markConflict = (remote: Snapshot) => {
     conflictRef.current = remote;
@@ -271,7 +275,12 @@ export function useSyncedWorkspace() {
         }
         if (alive) {
           readyRef.current = true;
+          if (knowledgeDirty.current && sessionRef.current?.shared) {
+            dirty.current = true;
+            cachePending();
+          }
           setReady(true);
+          if (knowledgeDirty.current) void pumpRef.current();
         }
       } catch (e) {
         if (alive) setBootError((e as Error).message);

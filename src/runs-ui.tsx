@@ -37,6 +37,43 @@ export function CancelGeneration({ endpoint }: { endpoint: string }) {
     </>
   );
 }
+export function GenerationProgress({ endpoint }: { endpoint: string }) {
+  const id = useActiveCalls().find(([, path]) => path === endpoint)?.[0];
+  const [progress, setProgress] = useState<{
+    label: string;
+    part: number;
+    parts: number;
+  }>();
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    const tick = () =>
+      api<{ progress?: { label: string; part: number; parts: number } }>(
+        `/runs/${id}`,
+      )
+        .then((run) => {
+          if (alive) setProgress(run.progress);
+        })
+        .catch(() => {});
+    void tick();
+    const timer = setInterval(tick, 800);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [id]);
+  if (!id) return null;
+  const part = progress?.part || 1;
+  const parts = Math.max(1, progress?.parts || 4);
+  return (
+    <div className="generation-progress" role="status">
+      <span>{progress?.label || "正在生成，长文会自动分段续写"}</span>
+      <div className="progress-track">
+        <span style={{ width: `${Math.min(100, (part / parts) * 100)}%` }} />
+      </div>
+    </div>
+  );
+}
 export function Sources({
   passages,
   canOpen,

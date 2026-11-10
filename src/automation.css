@@ -143,6 +143,31 @@
 .automation-status small {
   color: #52645a;
 }
+.generation-progress {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 240px);
+}
+.generation-progress > span {
+  color: #52645a;
+  font-size: 12px;
+}
+.automation-strip .progress-track,
+.automation-status .progress-track,
+.generation-progress .progress-track {
+  height: 6px;
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #d7e3da;
+}
+.automation-strip .progress-track > span,
+.automation-status .progress-track > span,
+.generation-progress .progress-track > span {
+  display: block;
+  height: 100%;
+  background: #6d947c;
+}
 .delivery-manifest {
   margin-top: 24px;
 }

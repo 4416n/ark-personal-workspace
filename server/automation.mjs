@@ -12,6 +12,8 @@ import {
   reviewMessages,
   parseReview,
 } from "./work-output.mjs";
+import { completeLongForm } from "./long-form.mjs";
+import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 
 const inputSchema = z.object({
   confirmed: z.literal(true),
@@ -118,24 +120,25 @@ export function projectAutomation({
       );
     const state = latest.snapshot.state;
     const next = transform(latest.input.task);
+    const drafted = {
+      ...state,
+      tasks: boundWorkspaceHistory(
+        state.tasks.map((t) => (t.id === next.id ? next : t)),
+      ),
+      activity: [
+        {
+          id: randomUUID(),
+          text: `自动执行：${next.title} · ${next.status === "done" ? "AI 审查通过" : "成果/审查已更新"}`.slice(
+            0,
+            500,
+          ),
+          at: new Date().toISOString(),
+        },
+        ...state.activity,
+      ].slice(0, 100),
+    };
     database.save(
-      {
-        ...state,
-        tasks: boundWorkspaceHistory(
-          state.tasks.map((t) => (t.id === next.id ? next : t)),
-        ),
-        activity: [
-          {
-            id: randomUUID(),
-            text: `自动执行：${next.title} · ${next.status === "done" ? "AI 审查通过" : "成果/审查已更新"}`.slice(
-              0,
-              500,
-            ),
-            at: new Date().toISOString(),
-          },
-          ...state.activity,
-        ].slice(0, 100),
-      },
+      syncDeliveredKnowledge(drafted),
       latest.snapshot.revision,
     );
   }
@@ -223,6 +226,7 @@ export function projectAutomation({
           job,
           `${generate ? (rejected ? "返工" : "生成") : "审查"}：${task.title}（调用 ${job.usedCalls}/${job.maxCalls}）`,
         );
+        if (!generate) job.progress = { part: 1, parts: 1, phase: "review" };
         const log = await runs.run(
           {
             kind: generate ? "auto-execute" : "auto-review",
@@ -237,12 +241,40 @@ export function projectAutomation({
           },
           async (req) => {
             if (generate) {
+              const finish = { reason: "" };
               return {
-                content: await completion(generationMessages(input, req), {
-                  maxTokens: 6000,
-                  req,
-                  config,
-                }),
+                content: await completeLongForm(
+                  completion,
+                  generationMessages(input, req),
+                  {
+                    finishReason: () => finish.reason,
+                    onPart: ({ part, parts }) => {
+                      if (part > 1) {
+                        if (job.usedCalls >= job.maxCalls)
+                          throw fail(
+                            "已到达本批调用上限；已保留成果。提高总上限并确认恢复，或改为人工处理",
+                          );
+                        job.usedCalls++;
+                      }
+                      job.progress = { part, parts, phase: "generate" };
+                      save(job, `分段撰写 ${part}/${parts}：${task.title}`);
+                      req.run.progress = {
+                        label: `分段撰写 ${part}/${parts}`,
+                        part,
+                        parts,
+                      };
+                      req.saveRun();
+                    },
+                    completion: {
+                      maxTokens: 6000,
+                      req,
+                      config,
+                      onFinish: (reason) => {
+                        finish.reason = reason;
+                      },
+                    },
+                  },
+                ),
                 source: "ai",
               };
             }
@@ -422,6 +454,7 @@ export function projectAutomation({
           title: j.title,
           status: j.status,
           note: j.note,
+          progress: j.progress || null,
         };
       }),
     get: (id) => {

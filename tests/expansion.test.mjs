@@ -97,6 +97,19 @@ test("RAG 检索相关片段，项目隔离、无命中与片段上限可验证"
   );
   assert.equal(retrieve(notes, "量子纠缠").length, 0);
   assert.ok(retrieve(notes, "个人品牌").every((p) => !p.projectId));
+  const semantic = retrieve(
+    [
+      {
+        id: "kb",
+        title: "公司制度条目",
+        content: "把制度、流程和常见问题整理成可检索的条目。",
+      },
+      { id: "car", title: "汽车维护", content: "轮胎需要定期检查气压。" },
+    ],
+    "知识库应该收录什么",
+  );
+  assert.ok(semantic.some((passage) => passage.noteId === "kb"));
+  assert.ok(!semantic.some((passage) => passage.noteId === "car"));
 });
 
 test("流程模板复用依赖与相对日期，暂停员工重分配，成果与审批不复制", () => {

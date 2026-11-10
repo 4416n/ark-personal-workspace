@@ -124,6 +124,7 @@ type Job = {
   mode: "auto" | "manual";
   taskIds: string[];
   events: { at: string; text: string }[];
+  progress?: { part: number; parts: number; phase?: string } | null;
 };
 type Report = {
   job: Job | null;
@@ -376,6 +377,15 @@ export function AutomationPanel({ projectId }: { projectId: string }) {
             调用尝试 {job.usedCalls}/{job.maxCalls} · 完成{" "}
             {tasks.filter((t) => t.status === "done").length}/{tasks.length}
           </span>
+          {active && job.progress && (
+            <div className="progress-track" aria-label="生成进度">
+              <span
+                style={{
+                  width: `${Math.min(100, (job.progress.part / Math.max(1, job.progress.parts)) * 100)}%`,
+                }}
+              />
+            </div>
+          )}
           {active && (
             <small>
               关闭页面仍会继续。需要编辑项目时，请先暂停并等待停止；取消仍可能产生服务商已处理部分的费用。
@@ -478,6 +488,7 @@ export function AutomationStrip() {
       status: string;
       kind?: string;
       id?: string;
+      progress?: { part: number; parts: number } | null;
     }[]
   >([]);
   useEffect(() => {
@@ -509,6 +520,15 @@ export function AutomationStrip() {
           <span>
             <strong>后台自动执行 · {j.title}</strong>
             <small>{j.note}</small>
+            {j.progress && (
+              <div className="progress-track" aria-hidden="true">
+                <span
+                  style={{
+                    width: `${Math.min(100, (j.progress.part / Math.max(1, j.progress.parts)) * 100)}%`,
+                  }}
+                />
+              </div>
+            )}
           </span>
           <button
             className="text-button"

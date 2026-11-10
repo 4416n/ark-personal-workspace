@@ -84,16 +84,49 @@ try {
   await new Promise((r) => reservation.close(r));
   const base = `http://127.0.0.1:${port}`;
   const startServer = async () => {
-    child = spawn(process.execPath, ["server/start.mjs"], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PORT: String(port),
-        HOST: "127.0.0.1",
-        DATA_DIR: data,
+    const isolate = process.env.ARK_ISOLATE_SERVER === "1";
+    const reads = isolate
+      ? [
+          root,
+          process.env.ARK_NODE_DIR,
+          data,
+          ...(process.env.ARK_EXTRA_READS || "").split("|"),
+          process.env.ARK_NET_GUARD_PATH,
+        ].filter(Boolean)
+      : [];
+    child = spawn(
+      process.execPath,
+      isolate
+        ? [
+            "--permission",
+            ...(process.env.ARK_NET_GUARD
+              ? ["--import", process.env.ARK_NET_GUARD]
+              : []),
+            ...reads.flatMap((entry) => [`--allow-fs-read=${entry}`]),
+            `--allow-fs-write=${data}`,
+            "server/start.mjs",
+          ]
+        : ["server/start.mjs"],
+      {
+        cwd: root,
+        env: isolate
+          ? {
+              PATH: process.env.PATH || "",
+              SystemRoot: process.env.SystemRoot || "",
+              PATHEXT: process.env.PATHEXT || "",
+              PORT: String(port),
+              HOST: "127.0.0.1",
+              DATA_DIR: data,
+            }
+          : {
+              ...process.env,
+              PORT: String(port),
+              HOST: "127.0.0.1",
+              DATA_DIR: data,
+            },
+        stdio: ["ignore", "pipe", "pipe"],
       },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    );
     child.stdout.on("data", (x) => append(x.toString()));
     child.stderr.on("data", (x) => append(x.toString()));
     let spawnError;
@@ -248,7 +281,9 @@ try {
     let offset = 0;
     while (offset < bytes.length)
       offset += writeSync(3, bytes, offset, bytes.length - offset);
-  } else
+  } else if (process.env.ARK_REPORT_MARKER === "1")
+    console.log("ARK_VERIFICATION_REPORT=" + JSON.stringify(report));
+  else
     console.log(JSON.stringify({ ...report, screenshot: undefined }, null, 2));
   process.exitCode = report.passed ? 0 : 1;
 }

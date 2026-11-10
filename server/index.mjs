@@ -8,6 +8,7 @@ import { openDatabase } from "./database.mjs";
 import { accessControl, lanAddresses } from "./access.mjs";
 import { executionLog } from "./runs.mjs";
 import { retrieve, retrievalContext } from "../shared/retrieval.mjs";
+import { completeLongForm } from "./long-form.mjs";
 import { projectAutomation } from "./automation.mjs";
 import { softwareDelivery } from "./software.mjs";
 import { generationMessages } from "./work-output.mjs";
@@ -312,6 +313,8 @@ export function createApp({
       temperature = 0.6,
       req,
       config: pinnedConfig,
+      allowPartial = false,
+      onFinish,
     } = {},
   ) {
     const config = pinnedConfig || (await readConfig());
@@ -381,7 +384,10 @@ export function createApp({
       req.saveRun();
     }
     const content = data.choices?.[0]?.message?.content;
-    if (data.choices?.[0]?.finish_reason === "length")
+    const reason = data.choices?.[0]?.finish_reason || "";
+    onFinish?.(reason);
+    if (req?.run) req.run.finishReason = reason;
+    if (reason === "length" && !allowPartial)
       throw new Error(
         "模型输出达到长度限制，内容可能不完整；未保存为交付物，请缩小任务范围后重试",
       );
@@ -552,10 +558,29 @@ export function createApp({
           knowledge: knowledgeSchema.optional(),
         })
         .parse(req.body);
-      const content = await completion(generationMessages(body, req), {
-        maxTokens: 6000,
-        req,
-      });
+      const finish = { reason: "" };
+      const content = await completeLongForm(
+        completion,
+        generationMessages(body, req),
+        {
+          finishReason: () => finish.reason,
+          onPart: ({ part, parts }) => {
+            req.run.progress = {
+              label: `分段撰写 ${part}/${parts}`,
+              part,
+              parts,
+            };
+            req.saveRun();
+          },
+          completion: {
+            maxTokens: 6000,
+            req,
+            onFinish: (reason) => {
+              finish.reason = reason;
+            },
+          },
+        },
+      );
       res.json({ content, source: "ai" });
     }),
   );

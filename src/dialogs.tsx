@@ -49,7 +49,7 @@ import {
 import { DeliveryHistory, ProjectRetrospective } from "./delivery-ui";
 import { emptyRetro, type RetroNotes } from "./retrospective";
 import { projectToTemplate } from "./templates";
-import { CancelGeneration, Sources } from "./runs-ui";
+import { CancelGeneration, GenerationProgress, Sources } from "./runs-ui";
 import {
   AutomationPanel,
   ContractFields,
@@ -1597,6 +1597,7 @@ function TaskDetail({
         <footer className="modal-footer">
           <div>
             {busy && <CancelGeneration endpoint="/execute" />}
+            {busy && <GenerationProgress endpoint="/execute" />}
             {original && (
               <button
                 type="button"

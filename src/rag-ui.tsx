@@ -17,7 +17,7 @@ export function KnowledgeRetrieval() {
         <FileSearch size={21} />
         <div>
           <h2>先找资料，再交给 AI</h2>
-          <p>在本地按关键词相关度提取片段，无需额外模型费用。</p>
+          <p>在本地按词义和近义概念找片段，不额外调用模型，资料也不会上传。</p>
         </div>
       </header>
       <form

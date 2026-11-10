@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { materialize } from "./project-bundle.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,11 +16,13 @@ const childEnv = {
 const command = (
   cmd,
   args,
-  { signal, timeout = 10000, limit = 2_500_000, fd = false } = {},
+  { signal, timeout = 10000, limit = 2_500_000, fd = false, cwd, env } = {},
 ) =>
   new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
-      env: childEnv,
+      cwd,
+      env: env || childEnv,
+      windowsHide: true,
       stdio: fd
         ? ["ignore", "pipe", "pipe", "pipe"]
         : ["ignore", "pipe", "pipe"],
@@ -30,7 +32,14 @@ const command = (
       report = "",
       bytes = 0,
       over = false;
-    const stop = () => child.kill("SIGKILL");
+    const stop = () => {
+      if (process.platform === "win32" && child.pid)
+        spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      else child.kill("SIGKILL");
+    };
     const timer = setTimeout(stop, timeout);
     const capture = (kind, b) => {
       bytes += b.length;
@@ -165,6 +174,7 @@ function bubbleArgs(input, browser, mounts) {
   ];
 }
 export async function sandboxAvailable() {
+  if (process.platform === "win32") return windowsSandboxAvailable();
   if (process.platform !== "linux")
     return {
       available: false,
@@ -228,6 +238,8 @@ export async function validateProject(files, { signal } = {}) {
       checks: [],
       logs: available.reason,
     };
+  if (process.platform === "win32")
+    return validateProjectWindows(files, { signal });
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), "ark-engineering-"),
   );
@@ -303,6 +315,153 @@ export async function validateProject(files, { signal } = {}) {
       };
     const report = JSON.parse(line.slice(marker.length));
     report.passed = report.passed === true && r.code === 0 && !r.over;
+    return report;
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+function windowsHostEnv(extra = {}) {
+  return {
+    PATH: process.env.PATH || "",
+    SystemRoot: process.env.SystemRoot || "",
+    PATHEXT: process.env.PATHEXT || "",
+    COMSPEC: process.env.COMSPEC || "",
+    ...extra,
+  };
+}
+async function toolchainPackages() {
+  const lock = JSON.parse(
+    await fs.readFile(
+      path.join(root, "server/scaffold/package-lock.json"),
+      "utf8",
+    ),
+  );
+  const packages = [];
+  for (const [name, spec] of Object.entries(lock.packages)) {
+    if (!name) continue;
+    const source = path.join(root, name);
+    let installed;
+    try {
+      installed = JSON.parse(
+        await fs.readFile(path.join(source, "package.json"), "utf8"),
+      );
+    } catch (error) {
+      if (spec.optional && error.code === "ENOENT") continue;
+      throw new Error("验证依赖缺失，请运行 npm ci：" + name);
+    }
+    if (installed.version !== spec.version)
+      throw new Error("验证依赖与交付锁文件不一致，请运行 npm ci：" + name);
+    packages.push({ name, source });
+  }
+  return packages;
+}
+let windowsProbe;
+async function windowsSandboxAvailable() {
+  windowsProbe ||= probeWindowsSandbox();
+  return windowsProbe;
+}
+async function probeWindowsSandbox() {
+  const secretDir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-win-probe-"));
+  const secret = path.join(secretDir, "secret");
+  const guard = pathToFileURL(
+    path.join(root, "server/windows-net-guard.mjs"),
+  ).href;
+  let hit = false;
+  const server = (await import("node:http")).createServer((_req, res) => {
+    hit = true;
+    res.end("hit");
+  });
+  try {
+    await fs.writeFile(secret, "never");
+    await toolchainPackages();
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const script = `const fs=require("node:fs"); let file=false; try { fs.readFileSync(${JSON.stringify(secret)}) } catch { file=true } fetch("http://127.0.0.1:${port}").then(()=>process.exit(2)).catch(()=>{ if(!file || process.env.ARK_SENTINEL) process.exit(3); process.exit(0); });`;
+    const probe = await command(
+      process.execPath,
+      [
+        "--permission",
+        "--import",
+        guard,
+        "--allow-fs-read=" + path.dirname(process.execPath),
+        "--allow-fs-read=" + path.join(root, "server/windows-net-guard.mjs"),
+        "-e",
+        script,
+      ],
+      { timeout: 15000, env: windowsHostEnv() },
+    );
+    if (probe.code !== 0)
+      throw new Error(
+        "权限沙箱探针失败：" + (probe.log || probe.out || probe.code),
+      );
+    if (hit) throw new Error("权限沙箱未能挡住网络");
+    return {
+      available: true,
+      reason:
+        "Windows 沙箱：生成的服务不能读取工作目录以外的文件、看不到宿主环境变量，网络出口被进程内防护截断。接口与 SQLite 会实际运行；这不是 Linux 内核命名空间，所以不跑浏览器冒烟，也不会在宿主机直接运行生成的服务。",
+    };
+  } catch (error) {
+    return {
+      available: false,
+      reason:
+        "Windows 隔离不可用：" +
+        error.message +
+        "。不会在宿主机直接运行生成的代码。",
+    };
+  } finally {
+    server.close();
+    await fs.rm(secretDir, { recursive: true, force: true });
+  }
+}
+async function linkToolchain(directory, packages) {
+  for (const item of packages) {
+    const dest = path.join(directory, item.name);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.symlink(item.source, dest, "junction");
+  }
+}
+async function validateProjectWindows(files, { signal }) {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ark-engineering-"),
+  );
+  try {
+    await materialize(directory, files);
+    const packages = await toolchainPackages();
+    await linkToolchain(directory, packages);
+    await fs.mkdir(path.join(directory, "dist"));
+    const result = await command(
+      process.execPath,
+      [path.join(directory, "scripts/verify.mjs"), "--api-only"],
+      {
+        signal,
+        timeout: 120000,
+        cwd: directory,
+        env: windowsHostEnv({
+          ARK_ISOLATE_SERVER: "1",
+          ARK_NODE_DIR: path.dirname(process.execPath),
+          ARK_EXTRA_READS: packages.map((item) => item.source).join("|"),
+          ARK_REPORT_MARKER: "1",
+          ARK_NET_GUARD: pathToFileURL(
+            path.join(root, "server/windows-net-guard.mjs"),
+          ).href,
+          ARK_NET_GUARD_PATH: path.join(root, "server/windows-net-guard.mjs"),
+        }),
+      },
+    );
+    signal?.throwIfAborted();
+    const marker = "ARK_VERIFICATION_REPORT=";
+    const line = result.out.split("\n").findLast((item) => item.startsWith(marker));
+    if (!line)
+      return {
+        passed: false,
+        checks: [],
+        logs: ("隔离执行失败或达到时间限制\n" + result.log + "\n" + result.out).slice(
+          -24000,
+        ),
+      };
+    const report = JSON.parse(line.slice(marker.length));
+    report.passed = report.passed === true && result.code === 0 && !result.over;
+    report.sandbox = "windows-permission";
     return report;
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
