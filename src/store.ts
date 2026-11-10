@@ -63,3 +63,17 @@ export function download(
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+export function downloadBytes(
+  name: string,
+  bytes: Uint8Array,
+  type = "application/octet-stream",
+) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const url = URL.createObjectURL(new Blob([copy.buffer], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

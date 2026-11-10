@@ -5467,3 +5467,31 @@ select:focus {
     min-width: 0;
   }
 }
+.kanban-card p.result-preview {
+  color: #4e6274;
+}
+.kanban-card .result-open {
+  color: #4f6d62;
+  font-size: 12px;
+}
+.task-row-main > .result-preview {
+  color: #607284;
+  font-size: 12px;
+}
+.closeout-banner {
+  border-color: #d5e3dc;
+  background: #f3f7f5;
+}
+.closeout-banner strong {
+  color: #3e564c;
+}
+.closeout-banner p,
+.deliverable-item small {
+  color: #617486;
+}
+.deliverable-item {
+  border-color: #dde6ef;
+}
+.deliverable-item strong {
+  color: #505d6b;
+}

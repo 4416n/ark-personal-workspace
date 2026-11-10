@@ -36,6 +36,7 @@ import {
 } from "./domain";
 import { api, download } from "./store";
 import { transitionError } from "../shared/task-policy.mjs";
+import { resultPreview } from "../shared/deliverables.mjs";
 
 export function Tasks() {
   const { state, open, update, notify } = useApp();
@@ -231,7 +232,16 @@ export function Tasks() {
                             />
                           </div>
                           <h4>{t.title}</h4>
-                          <p>{t.description}</p>
+                          {t.result.trim() ? (
+                            <>
+                              <p className="result-preview">
+                                {resultPreview(t.result) || "已写好交付正文"}
+                              </p>
+                              <span className="result-open">打开全文</span>
+                            </>
+                          ) : (
+                            <p>{t.description}</p>
+                          )}
                           <div className="kanban-card-footer">
                             <span
                               className={

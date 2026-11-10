@@ -38,7 +38,7 @@ import {
   type Task,
   type Project,
 } from "./domain";
-import { api, download } from "./store";
+import { api, download, downloadBytes } from "./store";
 import {
   prepareTaskDraft,
   replaceResult,
@@ -56,6 +56,12 @@ import {
   AiReviewSummary,
 } from "./automation-ui";
 import { deliveryMarkdown } from "../shared/contract.mjs";
+import {
+  deliverableFiles,
+  resultPreview,
+  safeFileName,
+  zipStore,
+} from "../shared/deliverables.mjs";
 import type { Passage } from "../shared/retrieval.mjs";
 import { DepartmentDetail } from "./organization";
 import { AllocationReview } from "./planning";
@@ -125,6 +131,55 @@ export function Dialogs({
 }
 import { FileCode2 } from "lucide-react";
 import { SoftwarePanel, softwareConfirmation } from "./software-ui";
+
+type ProjectTaskView =
+  | "software"
+  | "auto"
+  | "list"
+  | "route"
+  | "retro"
+  | "catalog";
+
+function DeliverableIndex({
+  tasks,
+  members,
+  onOpen,
+}: {
+  tasks: Task[];
+  members: Member[];
+  onOpen: (id: string) => void;
+}) {
+  const ready = tasks.filter((task) => task.result.trim());
+  if (!ready.length)
+    return (
+      <Empty
+        title="还没有成果正文"
+        description="任务写完交付后，全文会按条目列在这里，也可以从底部打包导出。"
+      />
+    );
+  return (
+    <div className="deliverable-index">
+      {ready.map((task) => (
+        <button
+          key={task.id}
+          className="deliverable-item"
+          onClick={() => onOpen(task.id)}
+        >
+          <FileText size={16} />
+          <span>
+            <strong>{task.title}</strong>
+            <small>
+              {members.find((member) => member.id === task.ownerId)?.name ||
+                "未分配"}
+              {" · "}
+              {resultPreview(task.result, 140) || "已写好交付正文"}
+            </small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function NewProject({
   close,
@@ -643,7 +698,7 @@ function ProjectDetail({
     p?.successCriteria || "",
   );
   const [budget, setBudget] = useState(p?.budget || 0);
-  const [taskView, setTaskView] = useState(
+  const [taskView, setTaskView] = useState<ProjectTaskView>(
     section || (p?.deliveryType === "software" ? "software" : "list"),
   );
   const [retroNotes, setRetroNotes] = useState<RetroNotes>(() => ({
@@ -657,7 +712,7 @@ function ProjectDetail({
   );
   const canLeaveProject = () =>
     !retroDirty || window.confirm("复盘有未保存的笔记，确定放弃并离开？");
-  const selectTaskView = (view: string) => {
+  const selectTaskView = (view: ProjectTaskView) => {
     if (taskView === "retro" && view !== "retro" && retroDirty) {
       if (!window.confirm("复盘笔记尚未保存，放弃修改并切换视图？")) return;
       setRetroNotes({
@@ -670,6 +725,22 @@ function ProjectDetail({
   };
   const tasks = state.tasks.filter((t) => t.projectId === id);
   const progress = projectProgress(p, tasks);
+  const readyToClose =
+    tasks.length > 0 &&
+    tasks.every((task) => task.status === "done") &&
+    p.status !== "done";
+  const exportDocument = () =>
+    download(
+      `${safeFileName(p.title)}.md`,
+      deliveryMarkdown(p, tasks),
+      "text/markdown",
+    );
+  const exportZip = () =>
+    downloadBytes(
+      `${safeFileName(p.title)}-成果.zip`,
+      zipStore(deliverableFiles(p, tasks, state.members)),
+      "application/zip",
+    );
   const changeStatus = (status: Project["status"]) => {
     if (
       status === "done" &&
@@ -844,6 +915,36 @@ function ProjectDetail({
             <span className={p.color} style={{ width: `${progress}%` }} />
           </div>
         </div>
+        {readyToClose && (
+          <div className="closeout-banner" role="status">
+            <div>
+              <strong>全部任务已完成</strong>
+              <p>
+                成果已经写在任务里。可以先复盘、导出，再把项目标为完成。
+              </p>
+            </div>
+            <div className="closeout-actions">
+              <button
+                className="button"
+                onClick={() => selectTaskView("retro")}
+              >
+                项目复盘
+              </button>
+              <button className="button" onClick={exportDocument}>
+                导出总文档
+              </button>
+              <button className="button" onClick={exportZip}>
+                导出成果 ZIP
+              </button>
+              <button
+                className="button primary"
+                onClick={() => changeStatus("done")}
+              >
+                标记项目完成
+              </button>
+            </div>
+          </div>
+        )}
         <div className="section-heading">
           <div className="project-task-switch" aria-label="项目任务视图">
             <button
@@ -869,6 +970,14 @@ function ProjectDetail({
             >
               <ListTodo size={14} />
               执行清单
+            </button>
+            <button
+              className={taskView === "catalog" ? "active" : ""}
+              aria-pressed={taskView === "catalog"}
+              onClick={() => selectTaskView("catalog")}
+            >
+              <FileText size={14} />
+              成果目录
             </button>
             <button
               className={taskView === "route" ? "active" : ""}
@@ -910,6 +1019,14 @@ function ProjectDetail({
           />
         ) : taskView === "route" ? (
           <ProjectRoute tasks={tasks} />
+        ) : taskView === "catalog" ? (
+          <DeliverableIndex
+            tasks={tasks}
+            members={state.members}
+            onOpen={(taskId) => {
+              if (canLeaveProject()) open({ type: "task", id: taskId });
+            }}
+          />
         ) : (
           tasks.map((t) => <TaskRow key={t.id} task={t} />)
         )}
@@ -973,16 +1090,14 @@ function ProjectDetail({
         </button>
         <button
           className="button"
-          onClick={() =>
-            download(
-              `${p.title}.md`,
-              deliveryMarkdown(p, tasks),
-              "text/markdown",
-            )
-          }
+          onClick={exportDocument}
         >
           <Download size={16} />
           导出任务文档
+        </button>
+        <button className="button" onClick={exportZip}>
+          <Download size={16} />
+          导出成果 ZIP
         </button>
       </footer>
     </Modal>
