@@ -34,3 +34,22 @@ docker compose logs -f app
 Docker 构建需要网络拉取 Node 镜像和 npm 依赖；工作台的隔离测试不等于镜像构建或公网部署验证。
 
 上线前请根据实际服务器配置域名、HTTPS 反向代理、身份认证、访问控制、限流和备份。不要直接公开包含私人数据、未完善权限的应用。模型生成的鉴权、财务与业务规则必须人工复核。工作台不会登录你的服务器、购买域名或自动发布。
+
+## 动态验收契约（v2）
+
+`tests/acceptance.json` 中除声明的 `api`、`browser` 外，还需 `persistence`：
+
+```json
+{
+  "storage": { "table": "notes", "column": "title" },
+  "create": { "method": "POST", "path": "/api/notes", "body": { "title": "{{value}}" }, "status": 201 },
+  "read": { "method": "GET", "path": "/api/notes", "status": 200 },
+  "idPointer": "/id",
+  "update": { "method": "PATCH", "path": "/api/notes/{{id}}", "body": { "title": "{{value}}" }, "status": 200 },
+  "remove": { "method": "DELETE", "path": "/api/notes/{{id}}", "status": 200 }
+}
+```
+
+`{{value}}` 由验证器运行时生成，写入声明的业务表字段；更新使用另一个随机值。ID 从创建响应的 `idPointer` 读取，支持整数或字母/数字/下划线/短横线字符串。更新、硬删除仅在业务支持时声明，否则省略并标为未覆盖；软删除需另行验收。不会只检查响应码或数据库文件头：操作后会停止应用、只读检查业务字段、重启再读取接口。
+
+浏览器 `fill` 和 `text` 的值须包含 `{{browserValue}}`。它是独立随机值，要求写入同一业务字段；随后重启服务，在没有浏览器本地缓存的新上下文读回。当前契约只覆盖一个文本字段的生命周期，不等同完整业务、安全或部署验收。旧版固定样例契约不会自动获得新标准通过结果。

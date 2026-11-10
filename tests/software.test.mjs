@@ -649,3 +649,35 @@ test("pin quota is enforced without deleting protected records", async (t) => {
     20,
   );
 });
+
+test("stale old-source revalidation does not steal recommendation or retention, including after restart", async (t) => {
+  const f = await fixture(t);
+  const older = await f.settled((await f.start()).body.id);
+  const snapshot = (await f.req("/workspace")).body;
+  snapshot.state.projects[0].goal += " 新功能要求";
+  await f.req("/workspace", snapshot, "PUT");
+  const newer = await f.settled((await f.start()).body.id);
+  assert.ok(newer.sourceOrigin.sequence > older.sourceOrigin.sequence);
+  const rechecked = await f.req(`/software-builds/${older.id}/revalidate`, {
+    confirmed: true,
+    allowSandbox: true,
+    revision: (await f.req("/workspace")).body.revision,
+  });
+  const result = await f.settled(rechecked.body.id);
+  assert.equal(result.stale, true);
+  assert.deepEqual(result.sourceOrigin, older.sourceOrigin);
+  let list = (await f.req(`/software/${f.id}`)).body;
+  assert.equal(list.recommendedBuildId, newer.id);
+  assert.equal(list.baselineBuildId, newer.id);
+  f.respond(() => "invalid output");
+  for (let i = 0; i < 6; i++)
+    await f.settled((await f.start({ maxRepairs: 0 })).body.id);
+  await f.reboot();
+  assert.equal((await f.req(`/software-builds/${newer.id}`)).status, 200);
+  list = (await f.req(`/software/${f.id}`)).body;
+  assert.equal(list.recommendedBuildId, newer.id);
+  f.respond(() => JSON.stringify(fullstackFixture()));
+  const next = await f.settled((await f.start()).body.id);
+  assert.equal(next.baseBuildId, newer.id);
+  assert.ok(next.sourceOrigin.sequence > newer.sourceOrigin.sequence);
+});

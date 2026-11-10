@@ -395,3 +395,70 @@ test("generation uses the selected base or deliberately starts fresh", async ({
   expect((await req(`/software/${id}`)).builds[0].baseBuildId).toBeNull();
   expect(calls).toBe(3);
 });
+
+test("mobile recommendation keeps the newer source baseline after an old version is revalidated", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  const create = async () => {
+    const b = await req(`/software/${id}/start`, {
+      confirmed: true,
+      allowSandbox: true,
+      revision: (await req("/workspace")).revision,
+      maxRepairs: 0,
+    });
+    await expect
+      .poll(async () => (await req(`/software-builds/${b.id}`)).status, {
+        timeout: 60000,
+      })
+      .toBe("verified");
+    return b;
+  };
+  const older = await create();
+  const snapshot = await req("/workspace");
+  snapshot.state.projects[0].goal += " 加入新的业务约束";
+  await req("/workspace", snapshot, "PUT");
+  const newer = await create();
+  const recheck = await req(`/software-builds/${older.id}/revalidate`, {
+    confirmed: true,
+    allowSandbox: true,
+    revision: (await req("/workspace")).revision,
+  });
+  await expect
+    .poll(async () => (await req(`/software-builds/${recheck.id}`)).status, {
+      timeout: 60000,
+    })
+    .toBe("verified");
+  expect((await req(`/software/${id}`)).recommendedBuildId).toBe(newer.id);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel(page);
+  await expect(page.getByLabel("工程生成起点", { exact: true })).toHaveValue(
+    "recommended",
+  );
+  await expect(page.locator(".software-panel")).toContainText("源码基线");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "生成新版本", exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const b = (await req(`/software/${id}`)).builds[0];
+        return (
+          b.id !== recheck.id &&
+          b.status === "verified" &&
+          b.baseBuildId === newer.id
+        );
+      },
+      { timeout: 60000 },
+    )
+    .toBe(true);
+  await expect(page.locator(".software-heading")).toContainText("构建与冒烟通过");
+  await page.screenshot({
+    path: "artifacts/source-baseline-390.png",
+    animations: "disabled",
+  });
+});

@@ -47,6 +47,11 @@ async function fixture(t) {
     pinned: true,
     validation: { passed: true, checks: [], logs: "历史通过" },
   };
+  build.sourceOrigin = {
+    id: build.id,
+    sequence: 7,
+    startedAt: build.startedAt,
+  };
   db.saveBuild(build);
   db.saveRun({
     id: randomUUID(),
@@ -151,6 +156,7 @@ test("complete archive round-trip restores source/logs/jobs/snapshots into an em
   assert.equal(restored.state.profile.name, f.state.profile.name);
   assert.equal(db.getBuild(f.build.id).status, "restored");
   assert.equal(db.getBuild(f.build.id).validation, null);
+  assert.deepEqual(db.getBuild(f.build.id).sourceOrigin, f.build.sourceOrigin);
   assert.deepEqual(
     sourceFiles(db.getBuild(f.build.id).files),
     sourceFiles(f.files),
@@ -351,16 +357,14 @@ test("active AI work blocks preview and restore, while export retains a consiste
     bytes = Buffer.from(await (await f.req("/full-backup")).arrayBuffer());
   const preview = await (await f.req("/full-backup/preview", bytes)).json();
   const raw = new DatabaseSync(path.join(f.dir, "workspace.sqlite"));
-  raw
-    .prepare("INSERT INTO runs VALUES (?, ?)")
-    .run(
-      "running-fixture",
-      JSON.stringify({
-        id: "running-fixture",
-        status: "running",
-        startedAt: new Date().toISOString(),
-      }),
-    );
+  raw.prepare("INSERT INTO runs VALUES (?, ?)").run(
+    "running-fixture",
+    JSON.stringify({
+      id: "running-fixture",
+      status: "running",
+      startedAt: new Date().toISOString(),
+    }),
+  );
   raw.close();
   assert.equal((await f.req("/full-backup/preview", bytes)).status, 409);
   assert.equal(

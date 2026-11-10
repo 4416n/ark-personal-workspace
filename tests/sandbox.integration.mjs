@@ -114,7 +114,7 @@ test("sandbox application cannot rewrite source, tests or trusted scripts", asyn
   const fixture = fullstackFixture();
   const app = fixture.files.find((f) => f.path === "server/app.mjs");
   app.content =
-    `import fs from 'node:fs';import assert from 'node:assert/strict';for(const name of ['scripts/verify.mjs','tests/acceptance.json','src/main.jsx','server/start.mjs']){assert.throws(()=>fs.writeFileSync(name,'tampered'),/read-only|EROFS|EACCES/);assert.throws(()=>fs.unlinkSync(name),/read-only|EROFS|EACCES/);}assert.throws(()=>fs.renameSync('src','src-hidden'),/read-only|EROFS|EACCES/);\n` +
+    `import fs from 'node:fs';import assert from 'node:assert/strict';for(const name of ['scripts/verify.mjs','scripts/persistence.mjs','tests/acceptance.json','src/main.jsx','server/start.mjs']){assert.throws(()=>fs.writeFileSync(name,'tampered'),/read-only|EROFS|EACCES/);assert.throws(()=>fs.unlinkSync(name),/read-only|EROFS|EACCES/);}assert.throws(()=>fs.renameSync('src','src-hidden'),/read-only|EROFS|EACCES/);\n` +
     app.content;
   const report = await validateProject(await assembleBundle(fixture));
   assert.equal(report.passed, true, JSON.stringify(report));
@@ -122,4 +122,70 @@ test("sandbox application cannot rewrite source, tests or trusted scripts", asyn
     report.checks.some((c) => c.name === "静态资源与请求错误状态" && c.passed),
   );
   assert.ok(report.checks.every((c) => typeof c.durationMs === "number"));
+});
+
+test("dynamic verifier rejects static samples and empty SQLite even when legacy checks pass", async () => {
+  const b = fullstackFixture();
+  b.files.find((f) => f.path === "server/app.mjs").content =
+    `import{Router}from'express';import{DatabaseSync}from'node:sqlite';import path from'node:path';const db=new DatabaseSync(path.join(process.env.DATA_DIR,'notes.sqlite'));db.exec('CREATE TABLE notes(id INTEGER PRIMARY KEY,title TEXT)');const api=Router();api.get('/notes',(_,res)=>res.json([{id:1,title:'接口测试笔记'},{id:2,title:'浏览器创建的笔记'}]));api.post('/notes',(req,res)=>res.status(201).json({id:3,title:req.body.title}));export default api;`;
+  const r = await validateProject(await assembleBundle(b));
+  assert.equal(r.passed, false);
+  assert.ok(r.checks.some((c) => c.name === "接口：读取笔记" && c.passed));
+  assert.ok(r.checks.some((c) => c.name === "随机数据创建与读取" && !c.passed));
+});
+test("dynamic verifier rejects memory-only writes rather than accepting an empty database header", async () => {
+  const b = fullstackFixture();
+  b.files.find((f) => f.path === "server/app.mjs").content =
+    `import{Router}from'express';import{DatabaseSync}from'node:sqlite';import path from'node:path';const db=new DatabaseSync(path.join(process.env.DATA_DIR,'notes.sqlite'));db.exec('CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY,title TEXT)');const rows=[];const api=Router();api.get('/notes',(_,res)=>res.json(rows));api.post('/notes',(req,res)=>{const row={id:rows.length+1,title:req.body.title};rows.push(row);res.status(201).json(row)});export default api;`;
+  const r = await validateProject(await assembleBundle(b));
+  assert.equal(r.passed, false);
+  assert.ok(r.checks.some((c) => c.name === "随机数据创建与读取" && c.passed));
+  assert.ok(r.checks.some((c) => c.name.includes("SQLite 随机") && !c.passed));
+});
+for (const [label, statement, checkName] of [
+  [
+    "ignored update",
+    "db.prepare('UPDATE notes SET title=? WHERE id=?').run(req.body.title.trim(),req.params.id);",
+    "随机数据更新与重启读回",
+  ],
+  [
+    "ignored deletion",
+    "db.prepare('DELETE FROM notes WHERE id=?').run(req.params.id);",
+    "随机数据删除与重启确认",
+  ],
+])
+  test(`dynamic verifier detects ${label} despite successful response codes`, async () => {
+    const b = fullstackFixture(),
+      app = b.files.find((f) => f.path === "server/app.mjs");
+    assert.ok(app.content.includes(statement));
+    app.content = app.content.replace(statement, "");
+    const r = await validateProject(await assembleBundle(b));
+    assert.equal(r.passed, false);
+    assert.ok(r.checks.some((c) => c.name === checkName && !c.passed));
+  });
+test("fresh browser context catches a frontend that displays only localStorage despite successful backend writes", async () => {
+  const b = fullstackFixture();
+  b.files.find((f) => f.path === "src/main.jsx").content =
+    `import React,{useState}from'react';import{createRoot}from'react-dom/client';import './styles.css';function App(){const[items,setItems]=useState(JSON.parse(localStorage.getItem('fake')||'[]')),[title,setTitle]=useState('');return <main><h1>我的笔记</h1><form onSubmit={async e=>{e.preventDefault();await fetch('/api/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});const next=[...items,title];setItems(next);localStorage.setItem('fake',JSON.stringify(next));}}><input value={title} onChange={e=>setTitle(e.target.value)}/><button>新增</button></form>{items.map((v,i)=><p key={i}>{v}</p>)}</main>}createRoot(document.getElementById('root')).render(<App/>);`;
+  const r = await validateProject(await assembleBundle(b));
+  assert.equal(r.passed, false);
+  assert.ok(
+    r.checks.some((c) => c.name === "浏览器启动与前后端交互" && c.passed),
+  );
+  assert.ok(r.checks.some((c) => c.name.includes("无缓存读回") && !c.passed));
+});
+test("undeclared update/delete remain explicitly uncovered; old fixed-only contracts cannot gain new verification", async () => {
+  const b = fullstackFixture();
+  delete b.tests.persistence.update;
+  delete b.tests.persistence.remove;
+  const r = await validateProject(await assembleBundle(b));
+  assert.equal(r.passed, true, JSON.stringify(r));
+  assert.equal(r.verificationVersion, 2);
+  assert.equal(r.coverage.update, false);
+  assert.equal(r.coverage.remove, false);
+  assert.match(r.scope, /未声明，未覆盖/);
+  delete b.tests.persistence;
+  const old = await validateProject(await assembleBundle(b));
+  assert.equal(old.passed, false);
+  assert.ok(old.checks.some((c) => c.name === "动态验收契约" && !c.passed));
 });

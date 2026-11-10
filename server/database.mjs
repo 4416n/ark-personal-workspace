@@ -232,7 +232,7 @@ export function openDatabase(directory) {
           .prepare("SELECT body FROM software_builds ORDER BY rowid DESC")
           .all()
           .map((r) => JSON.parse(r.body));
-        const keep = retainedBuildIds(rows);
+        const keep = retainedBuildIds(rows, read().state);
         const remove = db.prepare("DELETE FROM software_builds WHERE id=?");
         for (const row of rows) if (!keep.has(row.id)) remove.run(row.id);
         db.exec("COMMIT");
@@ -247,6 +247,7 @@ export function openDatabase(directory) {
           .prepare("SELECT body FROM software_builds ORDER BY rowid DESC")
           .all()
           .map((r) => JSON.parse(r.body)),
+        read().state,
       ),
     getBuild: (id) => {
       const r = db
