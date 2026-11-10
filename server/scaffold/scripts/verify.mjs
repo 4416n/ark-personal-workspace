@@ -6,14 +6,23 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import {
+  assertDynamicTests,
+  substitute,
+  sqliteContains,
+  verifyPersistence,
+  VERIFICATION_VERSION,
+} from "./persistence.mjs";
 const root = process.cwd();
 const report = {
   passed: false,
+  verificationVersion: VERIFICATION_VERSION,
   checks: [],
   logs: "",
   screenshot: null,
   scope:
-    "构建、启动、声明的接口、重启持久化与浏览器冒烟；不等于完整业务验收或部署验证",
+    "构建、声明接口、随机业务数据落库/重启读回及浏览器冒烟；不等于逐条需求验收、安全审计或部署验证",
 };
 const append = (s) => {
   report.logs = (report.logs + s).slice(-24000);
@@ -77,6 +86,7 @@ const stopServer = async () => {
 try {
   await check("生产构建", () => run(["scripts/build.mjs"]));
   const tests = JSON.parse(await fs.readFile("tests/acceptance.json", "utf8"));
+  await check("动态验收契约", async () => assertDynamicTests(tests));
   data = await fs.mkdtemp(path.join(os.tmpdir(), "ark-app-test-"));
   const reservation = net.createServer();
   await new Promise((r) => reservation.listen(0, "127.0.0.1", r));
@@ -155,47 +165,41 @@ try {
     );
   };
   for (const t of tests.api) await check("接口：" + t.name, () => apiTest(t));
-  await check("SQLite 数据与重启后读回", async () => {
-    await stopServer();
-    const entries = await fs.readdir(data, { recursive: true });
-    let sqlite = false;
-    for (const name of entries) {
-      const file = path.join(data, name);
-      if (!(await fs.stat(file)).isFile()) continue;
-      const handle = await fs.open(file);
-      try {
-        const b = Buffer.alloc(16);
-        await handle.read(b, 0, 16, 0);
-        if (b.toString() === "SQLite format 3\0") sqlite = true;
-      } finally {
-        await handle.close();
-      }
-    }
-    assert.ok(sqlite, "未发现 DATA_DIR 中的持久化 SQLite 数据库");
-    await startServer();
-    for (const t of tests.api.filter((t) => t.method === "GET"))
-      await apiTest(t);
+  report.coverage = await verifyPersistence({
+    tests,
+    base,
+    stop: stopServer,
+    start: startServer,
+    data,
+    check,
   });
+  report.coverage.browser = false;
+  report.scope += `；更新：${report.coverage.update ? "已验证" : "未声明，未覆盖"}；硬删除：${report.coverage.remove ? "已验证" : "未声明，未覆盖"}`;
   if (!process.argv.includes("--api-only")) {
     const { chromium } = await import("@playwright/test");
     browser = await chromium.launch({
       headless: true,
       args: ["--disable-gpu", "--no-sandbox"],
     });
-    const page = await browser.newPage({
+    let page = await browser.newPage({
       viewport: { width: 1280, height: 800 },
     });
     const errors = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.route("**/*", (route) => {
-      const u = new URL(route.request().url());
-      return u.origin === base || ["data:", "blob:"].includes(u.protocol)
-        ? route.continue()
-        : route.abort();
-    });
+    const preparePage = async () => {
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route("**/*", (route) => {
+        const u = new URL(route.request().url());
+        return u.origin === base || ["data:", "blob:"].includes(u.protocol)
+          ? route.continue()
+          : route.abort();
+      });
+    };
+    await preparePage();
+    const browserValue = `ark_browser_${randomUUID().replaceAll("-", "")}`;
+    const steps = substitute(tests.browser, { browserValue });
     await check("浏览器启动与前后端交互", async () => {
       await page.goto(base, { waitUntil: "networkidle", timeout: 15000 });
-      for (const step of tests.browser) {
+      for (const step of steps) {
         if (step.action === "fill")
           await page.locator(step.selector).fill(step.value, { timeout: 5000 });
         if (step.action === "click")
@@ -212,12 +216,37 @@ try {
         "页面为空",
       );
     });
+    await check("浏览器随机数据落库、重启与无缓存读回", async () => {
+      await page.close();
+      await stopServer();
+      assert.ok(
+        (
+          await sqliteContains(data, [browserValue], tests.persistence.storage)
+        ).has(browserValue),
+        "浏览器表单没有把随机内容写入 SQLite 业务字段",
+      );
+      await startServer();
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+      });
+      page = await context.newPage();
+      await preparePage();
+      await page.goto(base, { waitUntil: "networkidle", timeout: 15000 });
+      await page
+        .getByText(browserValue, { exact: false })
+        .first()
+        .waitFor({ timeout: 5000 });
+      assert.equal(
+        errors.length,
+        0,
+        "新浏览器上下文错误：" + errors.join("\n"),
+      );
+      report.coverage.browser = true;
+    });
     await check("手机视口基本布局", async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload({ waitUntil: "networkidle", timeout: 15000 });
-      const lastAssertion = tests.browser.findLast(
-        (step) => step.action === "text",
-      );
+      const lastAssertion = steps.findLast((step) => step.action === "text");
       if (lastAssertion)
         await page
           .getByText(lastAssertion.value, { exact: false })
@@ -236,6 +265,7 @@ try {
       "base64",
     );
   }
+  if (!report.coverage.browser) report.scope += "；浏览器：本次未运行";
   report.passed = true;
 } catch (e) {
   append("\n" + String(e.stack || e));

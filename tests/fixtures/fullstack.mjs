@@ -13,7 +13,7 @@ export function fullstackFixture() {
       },
       {
         path: "server/app.mjs",
-        content: `import{Router}from'express';import{DatabaseSync}from'node:sqlite';import path from'node:path';const db=new DatabaseSync(path.join(process.env.DATA_DIR||'./data','notes.sqlite'));db.exec('CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY,title TEXT NOT NULL)');const api=Router();api.get('/notes',(_,res)=>res.json(db.prepare('SELECT * FROM notes ORDER BY id DESC').all()));api.post('/notes',(req,res)=>{if(typeof req.body.title!=='string'||!req.body.title.trim())return res.status(400).json({error:'title required'});const result=db.prepare('INSERT INTO notes(title) VALUES(?)').run(req.body.title.trim());res.status(201).json({id:Number(result.lastInsertRowid),title:req.body.title.trim()})});api.delete('/notes/:id',(req,res)=>{db.prepare('DELETE FROM notes WHERE id=?').run(req.params.id);res.json({ok:true})});export default api;`,
+        content: `import{Router}from'express';import{DatabaseSync}from'node:sqlite';import path from'node:path';const db=new DatabaseSync(path.join(process.env.DATA_DIR||'./data','notes.sqlite'));db.exec('CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY,title TEXT NOT NULL)');const api=Router();api.get('/notes',(_,res)=>res.json(db.prepare('SELECT * FROM notes ORDER BY id DESC').all()));api.post('/notes',(req,res)=>{if(typeof req.body.title!=='string'||!req.body.title.trim())return res.status(400).json({error:'title required'});const result=db.prepare('INSERT INTO notes(title) VALUES(?)').run(req.body.title.trim());res.status(201).json({id:Number(result.lastInsertRowid),title:req.body.title.trim()})});api.patch('/notes/:id',(req,res)=>{if(typeof req.body.title!=='string'||!req.body.title.trim())return res.status(400).json({error:'title required'});db.prepare('UPDATE notes SET title=? WHERE id=?').run(req.body.title.trim(),req.params.id);res.json({ok:true})});api.delete('/notes/:id',(req,res)=>{db.prepare('DELETE FROM notes WHERE id=?').run(req.params.id);res.json({ok:true})});export default api;`,
       },
       {
         path: "README.md",
@@ -22,6 +22,24 @@ export function fullstackFixture() {
       },
     ],
     tests: {
+      persistence: {
+        storage: { table: "notes", column: "title" },
+        create: {
+          method: "POST",
+          path: "/api/notes",
+          body: { title: "{{value}}" },
+          status: 201,
+        },
+        read: { method: "GET", path: "/api/notes", status: 200 },
+        idPointer: "/id",
+        update: {
+          method: "PATCH",
+          path: "/api/notes/{{id}}",
+          body: { title: "{{value}}" },
+          status: 200,
+        },
+        remove: { method: "DELETE", path: "/api/notes/{{id}}", status: 200 },
+      },
       api: [
         {
           name: "创建笔记",
@@ -40,9 +58,9 @@ export function fullstackFixture() {
         },
       ],
       browser: [
-        { action: "fill", selector: "input", value: "浏览器创建的笔记" },
+        { action: "fill", selector: "input", value: "{{browserValue}}" },
         { action: "click", selector: "form button" },
-        { action: "text", value: "浏览器创建的笔记" },
+        { action: "text", value: "{{browserValue}}" },
       ],
     },
   };

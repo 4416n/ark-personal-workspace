@@ -1,3 +1,4 @@
+import { softwareConfirmation } from "./software-confirmation";
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -31,6 +32,7 @@ type Build = {
   pinned?: boolean;
   protected?: boolean;
   legacyRequirements?: boolean;
+  legacyVerification?: boolean;
   hasScreenshot: boolean;
   startedAt: string;
   attempt: number;
@@ -51,7 +53,12 @@ type Build = {
     checks: CheckResult[];
   }[];
 };
-type BuildList = { builds: Build[]; activeProjectId: string | null };
+type BuildList = {
+  builds: Build[];
+  activeProjectId: string | null;
+  recommendedBuildId?: string | null;
+  baselineBuildId?: string | null;
+};
 const names: Record<string, string> = {
   generating: "正在生成源码",
   validating: "正在隔离测试",
@@ -64,13 +71,6 @@ const names: Record<string, string> = {
 };
 const running = (b?: Build) =>
   !!b && ["generating", "validating", "cancelling"].includes(b.status);
-export const softwareConfirmation = (
-  title: string,
-  repairs: number,
-  maxTokens = 8192,
-) =>
-  `交付「${title}」的完整网站工程？\n\n将生成 React 前端、Express 后端、SQLite 数据库代码、测试用例与 Docker 部署文件，并在隔离环境中运行生成的代码，按实际错误自动修复。最多 ${repairs + 1} 次模型调用（首次生成 + ${repairs} 次修复），单次输出上限 ${maxTokens} tokens，需模型支持，消耗已配置模型额度。项目需求、任务成果、上一版源码及检索资料会发送给该模型。\n\n关闭页面仍继续，电脑服务必须运行；可随时停止。不会在宿主机直接运行生成的代码，也不会实际上线、安装项目依赖或连接外部业务服务。沙箱不可用时仅生成未验证源码。\n\n检查通过只表示指定构建与冒烟通过，不代表所有业务与安全要求已验收。`;
-
 export function SoftwarePanel({ projectId }: { projectId: string }) {
   const { state, config, session, syncNow, navigate, open } = useApp();
   const project = state.projects.find((p) => p.id === projectId);
@@ -139,7 +139,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
   const candidates = list.builds.filter((b) => b.files.length && !running(b));
   const generationBase =
     baseChoice === "recommended"
-      ? candidates.find((b) => b.status === "verified") || candidates[0]
+      ? candidates.find((b) => b.id === list.recommendedBuildId)
       : candidates.find((b) => b.id === baseChoice);
   const baseMissing =
     !["recommended", "fresh"].includes(baseChoice) && !generationBase;
@@ -305,8 +305,10 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
         <p>{cap?.reason || "正在检查，不会在宿主机直接执行生成的代码。"}</p>
         <p>
           生成 → 实际构建与测试 → 失败自动修复 → 保存版本。普通历史每项目最近 5
-          版、全局最近 30 版；每项目最近成功版、运行中版本和最多 20
-          个手动锁定版额外保留。完整备份包含源码，业务 JSON 不包含。
+          版、全局最近 30
+          版；源码稳定基线、匹配当前需求的成功版、运行中版本和最多 20
+          个手动锁定版额外保留。旧版重验不会变成更新的源码。完整备份包含源码，业务
+          JSON 不包含。
         </p>
       </details>
       {!!candidates.length && (
@@ -319,7 +321,9 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
               disabled={busy || !!list.activeProjectId}
               onChange={(e) => setBaseChoice(e.target.value)}
             >
-              <option value="recommended">自动推荐：优先最近验证通过版</option>
+              <option value="recommended">
+                自动推荐：当前需求成功版 / 源码基线
+              </option>
               <option value="fresh">从头生成，不使用旧源码</option>
               {candidates.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -472,6 +476,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                     {names[b.status]}
                     {b.mode === "validate" ? " · 仅重验" : ""}
                     {b.pinned ? " · 已锁定" : b.protected ? " · 自动保留" : ""}
+                    {b.id === list.baselineBuildId ? " · 源码基线" : ""}
                   </option>
                 ))}
               </select>
@@ -491,7 +496,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                   if (
                     build.pinned &&
                     !window.confirm(
-                      "解除锁定后，非最近成功版可能在后续清理中移除。建议先下载完整备份。继续？",
+                      "解除锁定后，不再受自动保护的旧版本可能立即被清理。建议先下载完整备份。继续？",
                     )
                   )
                     return;
@@ -515,7 +520,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                 {build.pinned
                   ? "已锁定，不随普通历史清理"
                   : build.protected
-                    ? "自动保留：最近成功版或运行中版本"
+                    ? "自动保留：源码基线、当前需求成功版或运行中版本"
                     : "普通历史版本"}
               </small>
             </div>
@@ -523,6 +528,11 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
           {build.legacyRequirements && (
             <p className="software-note">
               此历史版本使用旧版严格指纹，非需求字段也可能触发过期；不会在没有原始需求证据时自动重置指纹。新生成版本使用精准需求指纹。
+            </p>
+          )}
+          {build.legacyVerification && (
+            <p className="software-note">
+              此报告来自旧版检查，不包含新的随机数据持久化验证；不会自动升级为新标准通过。若旧工程缺少动态验收契约，需要生成新版本补齐，原源码仍可下载。
             </p>
           )}
           {build.baseBuildId && (
@@ -601,7 +611,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
             </h4>
             <p className="software-note">
               {build.validation?.scope || "未产生验证报告，不代表已经通过。"}{" "}
-              测试用例由模型声明，未做独立安全审计、Docker
+              接口与存储映射由模型声明，随机测试数据由验证器生成；未声明的修改/硬删除不算覆盖。未做独立安全审计、Docker
               镜像构建或公开部署验证。
             </p>
             {build.validation?.checks.map((c, i) => (

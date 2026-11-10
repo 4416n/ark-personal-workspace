@@ -93,6 +93,13 @@ const build = z
     requirementsHash: z.string().regex(/^[a-f0-9]{64}$/),
     requirementsVersion: z.union([z.literal(1), z.literal(2)]).optional(),
     mode: z.enum(["generate", "validate"]).optional(),
+    sourceOrigin: z
+      .object({
+        id: z.string().uuid(),
+        sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        startedAt: at.nullable(),
+      })
+      .optional(),
     baseBuildId: z.string().uuid().nullable().optional(),
     baseSourceHash: z.string().max(64).nullable().optional(),
     maxRepairs: z.number().int().min(0).max(2).default(0),

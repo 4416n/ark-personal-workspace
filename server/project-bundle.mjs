@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { assertDynamicTests } from "./scaffold/scripts/persistence.mjs";
 const scaffold = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "scaffold",
@@ -12,6 +13,7 @@ const fixed = [
   "package-lock.json",
   "scripts/build.mjs",
   "scripts/verify.mjs",
+  "scripts/persistence.mjs",
   "server/start.mjs",
   "index.html",
   "Dockerfile",
@@ -72,6 +74,26 @@ const browserCase = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("text"), value: z.string().min(1).max(1000) }),
 ]);
+const persistenceStep = z
+  .object({
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+    path: z.string().min(1).max(200),
+    body: z.unknown().optional(),
+    status: z.number().int().min(200).max(299),
+  })
+  .strict();
+const persistenceSchema = z
+  .object({
+    storage: z
+      .object({ table: z.string().max(64), column: z.string().max(64) })
+      .strict(),
+    create: persistenceStep,
+    read: persistenceStep,
+    idPointer: z.string().max(120).optional(),
+    update: persistenceStep.optional(),
+    remove: persistenceStep.optional(),
+  })
+  .strict();
 export const sourceFiles = (files) =>
   files.filter((f) => pathSchema.safeParse(f.path).success);
 export const bundleSchema = z.object({
@@ -83,9 +105,10 @@ export const bundleSchema = z.object({
   tests: z.object({
     api: z.array(apiCase).min(2).max(12),
     browser: z.array(browserCase).min(2).max(12),
+    persistence: persistenceSchema.optional(),
   }),
 });
-export function parseBundle(content) {
+export function parseBundle(content, { requirePersistence = false } = {}) {
   if (Buffer.byteLength(content) > 650000)
     throw new Error("工程输出总量超过上限");
   let bundle;
@@ -107,6 +130,8 @@ export function parseBundle(content) {
   }
   if (Buffer.byteLength(JSON.stringify(bundle.tests)) > 32000)
     throw new Error("验收用例超过32KB");
+  if (requirePersistence || bundle.tests.persistence)
+    assertDynamicTests(bundle.tests);
   const names = new Set();
   let bytes = 0;
   for (const f of bundle.files) {

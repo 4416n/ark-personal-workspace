@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   ArrowLeft,
@@ -130,7 +130,10 @@ export function Dialogs({
   }
 }
 import { FileCode2 } from "lucide-react";
-import { SoftwarePanel, softwareConfirmation } from "./software-ui";
+import { softwareConfirmation } from "./software-confirmation";
+const SoftwarePanel = lazy(() =>
+  import("./software-ui").then((m) => ({ default: m.SoftwarePanel })),
+);
 
 type ProjectTaskView =
   "software" | "auto" | "list" | "route" | "retro" | "catalog";
@@ -1006,7 +1009,9 @@ function ProjectDetail({
           </button>
         </div>
         {taskView === "software" ? (
-          <SoftwarePanel projectId={id} />
+          <Suspense fallback={<p role="status">正在加载工程交付…</p>}>
+            <SoftwarePanel projectId={id} />
+          </Suspense>
         ) : taskView === "auto" ? (
           <AutomationPanel projectId={id} />
         ) : taskView === "retro" ? (
