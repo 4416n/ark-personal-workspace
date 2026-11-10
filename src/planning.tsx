@@ -15,6 +15,7 @@ import { Avatar } from "./components";
 import { priorityText, type PlanItem, type Priority } from "./domain";
 import { allocationWarnings } from "./insights";
 import { rankMembers } from "../shared/matching.mjs";
+import { ContractFields } from "./automation-ui";
 
 export function AllocationReview({
   plan,
@@ -151,6 +152,11 @@ export function AllocationReview({
                   ))}
                 </select>
               </div>
+              <ContractFields
+                task={item}
+                change={(patch) => change(i, patch)}
+                prefix={`任务 ${i + 1} `}
+              />
               <div className="allocation-dependencies">
                 <Link2 size={13} />
                 <span>前置任务</span>

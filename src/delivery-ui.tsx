@@ -56,6 +56,7 @@ export function ReviewTrail({ task }: { task: Task }) {
               <header>
                 <strong>
                   {r.action === "approved" ? "验收通过" : "退回修改"}
+                  {r.actor === "ai" ? " · AI 审查" : " · 人工"}
                 </strong>
                 <span>
                   {r.versionNumber ? `V${r.versionNumber}` : "无交付物版本"}

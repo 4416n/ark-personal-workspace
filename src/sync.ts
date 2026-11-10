@@ -90,7 +90,7 @@ export function useSyncedWorkspace() {
     setConflict(remote);
     setStatus("两台设备修改了相同内容，请选择保留版本");
   };
-  const pump = async () => {
+  const pump = async (forceRead = false) => {
     if (
       !readyRef.current ||
       !sessionRef.current?.shared ||
@@ -112,8 +112,13 @@ export function useSyncedWorkspace() {
           base.current = { ...saved, state: stateSchema.parse(saved.state) };
           if (stateRef.current === submitted) {
             dirty.current = false;
+            if (
+              JSON.stringify(base.current.state) !== JSON.stringify(submitted)
+            )
+              adopt(base.current.state);
             localStorage.removeItem(PENDING);
             setStatus("已保存到电脑");
+            setError("");
           } else cachePending();
         } catch (e) {
           if ((e as { status?: number }).status !== 409) throw e;
@@ -137,10 +142,15 @@ export function useSyncedWorkspace() {
           }
         }
       } else if (
-        !document.querySelector('[role="dialog"]') &&
-        !["INPUT", "TEXTAREA", "SELECT"].includes(
-          document.activeElement?.tagName || "",
-        )
+        forceRead ||
+        (Array.from(document.querySelectorAll('[role="dialog"]')).every(
+          (d) =>
+            d.querySelector("[data-live-project]") &&
+            !d.querySelector(".project-edit-form"),
+        ) &&
+          !["INPUT", "TEXTAREA", "SELECT"].includes(
+            document.activeElement?.tagName || "",
+          ))
       ) {
         const remote: Snapshot = await request(
           `/workspace?revision=${base.current.revision}`,
@@ -150,10 +160,15 @@ export function useSyncedWorkspace() {
           base.current = remote;
           adopt(remote.state);
         }
-        if (!dirty.current) setStatus("已保存到电脑");
+        if (!dirty.current) {
+          setStatus("已保存到电脑");
+          setError("");
+        }
       }
     } catch (error) {
-      if ([400, 413].includes((error as { status?: number }).status || 0)) {
+      if (
+        [400, 413, 423].includes((error as { status?: number }).status || 0)
+      ) {
         setError((error as Error).message);
         setStatus("修改尚未保存到电脑，请检查内容或导出备份");
         return;
@@ -315,6 +330,20 @@ export function useSyncedWorkspace() {
     setStatus("正在同步…");
     void pumpRef.current();
   };
+  const syncNow = async () => {
+    if (!readyRef.current || !sessionRef.current?.shared)
+      throw new Error("请先连接电脑共享工作台");
+    const until = Date.now() + 18000;
+    do {
+      if (conflictRef.current) throw new Error("请先处理设备间的保存冲突");
+      if (!running.current) {
+        await pumpRef.current(true);
+        if (!dirty.current && base.current) return base.current.revision;
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    } while (Date.now() < until);
+    throw new Error("修改还未保存到电脑，请检查连接与保存状态后重试");
+  };
   return {
     state,
     update,
@@ -326,5 +355,6 @@ export function useSyncedWorkspace() {
     conflict,
     resolve,
     bootError,
+    syncNow,
   };
 }

@@ -1,0 +1,313 @@
+/* Extend the office's graphite / sage palette; one continuous delivery sheet. */
+.contract-fields {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid #e8eaed;
+}
+.contract-fields .full {
+  grid-column: 1 / -1;
+}
+.contract-fields .field {
+  min-width: 0;
+}
+.contract-fields small {
+  line-height: 1.7;
+  color: #647489;
+}
+.automation-panel {
+  border: 1px solid #e8eaed;
+  border-radius: 12px;
+  background: #fff;
+  padding: 22px;
+  margin-top: 16px;
+}
+.automation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.automation-heading h3 {
+  margin: 0 0 8px;
+  color: #30353d;
+  font-size: 19px;
+}
+.automation-heading p {
+  margin: 0;
+  line-height: 1.7;
+  color: #647489;
+  font-size: 13px;
+}
+.automation-heading > span {
+  flex-shrink: 0;
+}
+.automation-steps {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 20px 0;
+  padding: 0;
+  list-style: none;
+  border-block: 1px solid #e8eaed;
+}
+.automation-steps li {
+  padding: 12px 18px 12px 0;
+  font-size: 12px;
+  color: #52645a;
+}
+.automation-steps li:not(:last-child)::after {
+  content: "→";
+  margin-left: 18px;
+  color: #92969e;
+}
+.automation-settings {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.automation-settings .field {
+  min-width: 0;
+}
+.automation-settings select,
+.automation-settings input {
+  width: 100%;
+  min-width: 0;
+}
+.automation-caveat {
+  max-width: 76ch;
+  color: #65717f;
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 16px 0;
+}
+.automation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.automation-policy {
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: #647489;
+}
+.automation-policy > summary {
+  cursor: pointer;
+  padding: 4px 0 14px;
+}
+.automation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dce8df;
+  background: #f2f6f3;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.automation-strip > span {
+  display: grid;
+  gap: 5px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.automation-strip strong {
+  font-size: 13px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.automation-strip small {
+  font-size: 11px;
+  color: #647489;
+  overflow-wrap: anywhere;
+}
+.automation-status {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-left: 3px solid #8ba797;
+  background: #f2f6f3;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.automation-status strong {
+  font-weight: 550;
+}
+.automation-status span,
+.automation-status small {
+  color: #52645a;
+}
+.delivery-manifest {
+  margin-top: 24px;
+}
+.delivery-manifest > h4 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.manifest-item {
+  border-top: 1px solid #e8eaed;
+}
+.manifest-item:last-child {
+  border-bottom: 1px solid #e8eaed;
+}
+.manifest-item > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 17px 0;
+}
+.manifest-item > summary::-webkit-details-marker {
+  display: none;
+}
+.manifest-item > summary > svg {
+  flex-shrink: 0;
+  color: #687d70;
+}
+.manifest-item > summary > span {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.manifest-item > summary strong {
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.manifest-item > summary small {
+  font-size: 12px;
+  color: #647489;
+  overflow-wrap: anywhere;
+}
+.manifest-item > summary::after {
+  content: "+";
+  color: #647489;
+}
+.manifest-item[open] > summary::after {
+  content: "−";
+}
+.manifest-body {
+  padding: 0 0 20px 29px;
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.manifest-body ul {
+  padding-left: 18px;
+}
+.manifest-body .markdown {
+  max-height: 560px;
+  overflow: auto;
+  padding: 18px;
+  background: #f8f9fa;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+}
+.manifest-body .markdown pre {
+  max-width: 100%;
+  overflow: auto;
+}
+.manifest-block {
+  background: #f7f0e5;
+  color: #735d39;
+  padding: 10px 12px;
+  border-radius: 6px;
+}
+.ai-review-summary {
+  background: #f4f7f5;
+  padding: 16px;
+  margin: 12px 0;
+  border-radius: 8px;
+  color: #3f5148;
+}
+.ai-review-summary h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.ai-review-summary p,
+.ai-review-summary li {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.ai-review-summary li p {
+  margin: 2px 0 10px;
+  color: #647489;
+}
+.ai-review-summary small {
+  font-size: 11px;
+}
+.automation-events {
+  margin-top: 18px;
+  font-size: 12px;
+}
+.automation-events summary {
+  cursor: pointer;
+  color: #647489;
+}
+.automation-events ol {
+  padding: 0;
+  list-style: none;
+  max-height: 250px;
+  overflow: auto;
+}
+.automation-events li {
+  display: flex;
+  gap: 14px;
+  border-bottom: 1px solid #e8eaed;
+  padding: 10px 0;
+  line-height: 1.7;
+}
+.automation-events time {
+  flex-shrink: 0;
+  color: #647489;
+  font-variant-numeric: tabular-nums;
+}
+.project-task-switch {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .automation-panel {
+    padding: 14px;
+  }
+  .automation-heading {
+    flex-direction: column;
+  }
+  .automation-settings,
+  .contract-fields {
+    grid-template-columns: 1fr;
+  }
+  .automation-steps {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .automation-steps li {
+    padding-right: 0;
+  }
+  .automation-steps li::after {
+    display: none;
+  }
+  .automation-controls .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .manifest-body {
+    padding-left: 0;
+  }
+  .manifest-body .markdown {
+    padding: 12px;
+  }
+  .automation-status {
+    padding: 12px;
+  }
+}

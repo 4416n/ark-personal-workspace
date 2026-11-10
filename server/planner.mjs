@@ -1,4 +1,5 @@
 import { recommendedMember } from "../shared/matching.mjs";
+import { taskContract } from "../shared/contract.mjs";
 export const matchMember = recommendedMember;
 export function localPlan(goal, members, tasks = []) {
   const content = /内容|文章|自媒体|文案|公众号|小红书|视频|写作/.test(goal);
@@ -79,6 +80,13 @@ export function localPlan(goal, members, tasks = []) {
     const match = matchMember(skills, members, assigned, [2, 3, 5, 2, 1][i]);
     const item = {
       title: name,
+      deliverable: output,
+      executionMode: "ai",
+      acceptanceCriteria: [
+        `提供完整的${output}，不能只给出待办建议`,
+        `内容围绕「${title}」，步骤和判断依据可检查`,
+        "明确使用方式、待确认事项；不虚构已完成外部操作或验证",
+      ],
       description: `项目目标：${goal}\n\n本阶段：${name}\n交付物：${output}\n验收：交付内容应围绕「${title}」，提供具体步骤；信息不足时列出待确认事项。`,
       skills,
       priority: i === 0 || i === 2 ? "high" : "medium",
@@ -123,6 +131,21 @@ export function parsePlan(content, members, tasks) {
     const planned = {
       title: item.title.trim().slice(0, 200),
       description: item.description.slice(0, 10000),
+      ...taskContract({
+        title: item.title.trim(),
+        description: item.description,
+        deliverable:
+          typeof item.deliverable === "string"
+            ? item.deliverable.slice(0, 300)
+            : "",
+        acceptanceCriteria: Array.isArray(item.acceptanceCriteria)
+          ? item.acceptanceCriteria
+              .filter((x) => typeof x === "string" && x.trim())
+              .map((x) => x.trim().slice(0, 1000))
+              .slice(0, 12)
+          : [],
+        executionMode: item.executionMode === "human" ? "human" : "ai",
+      }),
       skills,
       priority: ["high", "medium", "low"].includes(item.priority)
         ? item.priority

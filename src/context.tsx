@@ -4,7 +4,7 @@ import type { Session } from "./sync";
 export type DialogState =
   | { type: "project-new"; goal?: string }
   | { type: "department"; name: string }
-  | { type: "project"; id: string }
+  | { type: "project"; id: string; section?: "auto" | "software" }
   | { type: "task"; id?: string; projectId?: string }
   | { type: "member"; id?: string }
   | { type: "staff-work"; id: string }
@@ -19,6 +19,7 @@ export type AppContextType = {
   open: (dialog: DialogState) => void;
   notify: (message: string, error?: boolean) => void;
   session?: Session | null;
+  syncNow: () => Promise<number>;
 };
 export const AppContext = createContext<AppContextType | null>(null);
 export function useApp() {

@@ -102,7 +102,7 @@ const labels: Record<string, string> = {
   cancelled: "已取消",
 };
 export function RunsPage() {
-  const { state, update, notify } = useApp();
+  const { state, update, notify, open } = useApp();
   const [runs, setRuns] = useState<Run[]>([]);
   const [selected, setSelected] = useState<Run | null>(null);
   const [error, setError] = useState("");
@@ -284,31 +284,64 @@ export function RunsPage() {
                 return true;
               }}
             />
-            {selected.output?.content && (
-              <div className="markdown run-output">
-                <ReactMarkdown>{selected.output.content}</ReactMarkdown>
+            {selected.kind === "software-generate" && (
+              <div className="alert">
+                这里记录模型生成的文件清单，不是最终工程验收。构建、运行、自动修复结果和
+                ZIP 请在项目「工程交付」查看。
               </div>
             )}
+            {selected.output?.content &&
+              selected.kind !== "software-generate" && (
+                <div className="markdown run-output">
+                  <ReactMarkdown>{selected.output.content}</ReactMarkdown>
+                </div>
+              )}
             {selected.output?.tasks && (
               <pre className="run-output">
                 {JSON.stringify(selected.output.tasks, null, 2)}
               </pre>
             )}
             <p className="field-hint">
-              重试使用当时的要求与资料、当前模型配置；不会自动覆盖任务成果。
+              {selected.kind === "software-generate"
+                ? "模型调用成功不代表工程测试通过；源码在交付面板逐文件查看，原始模型输出可导出为 JSON。"
+                : selected.kind.startsWith("auto-")
+                  ? "自动执行记录包含本次要求、参考与结果；请在项目「自动执行」面板暂停或恢复流程。"
+                  : "重试使用当时的要求与资料、当前模型配置；不会自动覆盖任务成果。"}
             </p>
           </div>
           <footer className="modal-footer">
             <div className="inline-controls">
+              {selected.kind === "software-generate" && (
+                <button
+                  className="button"
+                  onClick={() => {
+                    const id = (
+                      selected.input?.project as { id?: string } | undefined
+                    )?.id;
+                    if (!id || !state.projects.some((p) => p.id === id)) {
+                      notify("原项目不存在，可导出原始结果", true);
+                      return;
+                    }
+                    setSelected(null);
+                    open({ type: "project", id, section: "software" });
+                  }}
+                >
+                  查看工程交付
+                </button>
+              )}
               {selected.output && (
                 <button
                   className="button"
                   onClick={() =>
                     download(
-                      "AI执行成果.md",
+                      selected.kind === "software-generate"
+                        ? "工程模型原始输出.json"
+                        : "AI执行成果.md",
                       selected.output?.content ||
                         JSON.stringify(selected.output, null, 2),
-                      "text/markdown",
+                      selected.kind === "software-generate"
+                        ? "application/json"
+                        : "text/markdown",
                     )
                   }
                 >
@@ -368,16 +401,19 @@ export function RunsPage() {
                 </button>
               )}
             </div>
-            {selected.status !== "running" && (
-              <button
-                className="button primary"
-                disabled={retrying}
-                onClick={() => void retry()}
-              >
-                <RotateCcw size={14} />
-                {retrying ? "重试中…" : "重新执行"}
-              </button>
-            )}
+            {selected.status !== "running" &&
+              ["/execute", "/plan", "/chat", "/test"].includes(
+                selected.endpoint,
+              ) && (
+                <button
+                  className="button primary"
+                  disabled={retrying}
+                  onClick={() => void retry()}
+                >
+                  <RotateCcw size={14} />
+                  {retrying ? "重试中…" : "重新执行"}
+                </button>
+              )}
             {retrying && <CancelGeneration endpoint={selected.endpoint} />}
           </footer>
         </Modal>

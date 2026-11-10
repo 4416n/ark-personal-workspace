@@ -44,6 +44,31 @@ const reviewSchema = z.object({
   note: z.string().max(10000),
   versionId: id.optional(),
   versionNumber: z.number().int().min(1).optional(),
+  actor: z.enum(["human", "ai"]).optional(),
+  runId: id.optional(),
+});
+const contractFields = {
+  deliverable: z.string().max(300).optional(),
+  acceptanceCriteria: z.array(z.string().min(1).max(1000)).max(12).optional(),
+  executionMode: z.enum(["ai", "human"]).optional(),
+};
+const aiReviewSchema = z.object({
+  versionId: id,
+  runId: id,
+  at: stamp,
+  model: z.string().max(150),
+  passed: z.boolean(),
+  requiresHuman: z.boolean(),
+  summary: z.string().max(3000),
+  checks: z
+    .array(
+      z.object({
+        criterion: z.string().max(1000),
+        passed: z.boolean(),
+        evidence: z.string().max(1500),
+      }),
+    )
+    .max(12),
 });
 export const retrospectiveSchema = z.object({
   outcome: z.string().max(5000),
@@ -68,6 +93,7 @@ export const memberSchema = z.object({
 });
 export const projectSchema = z.object({
   id,
+  deliveryType: z.enum(["software", "document"]).optional(),
   title: z.string().min(1).max(100),
   goal: z.string().min(1).max(10000),
   deadline: day,
@@ -81,6 +107,7 @@ export const projectSchema = z.object({
   retrospective: retrospectiveSchema.optional(),
 });
 export const taskSchema = z.object({
+  ...contractFields,
   id,
   projectId: id,
   title: z.string().min(1).max(200),
@@ -102,6 +129,7 @@ export const taskSchema = z.object({
   reviews: z.array(reviewSchema).max(50).optional(),
   legacyReviewNote: z.string().max(10000).optional(),
   resultSources: z.array(passageSchema).max(6).optional(),
+  aiReview: aiReviewSchema.optional(),
 });
 export const knowledgeSchema = z.object({
   id,
@@ -114,6 +142,7 @@ export const knowledgeSchema = z.object({
 export const templateSchema = z
   .object({
     id,
+    deliveryType: z.enum(["software", "document"]).optional(),
     name: z.string().min(1).max(100),
     goal: z.string().max(10000),
     successCriteria: z.string().max(3000),
@@ -121,6 +150,7 @@ export const templateSchema = z
     tasks: z
       .array(
         z.object({
+          ...contractFields,
           title: z.string().min(1).max(200),
           description: text,
           skills: z.array(z.string().max(50)).max(30),
@@ -240,6 +270,9 @@ export type AiConfig = {
   configured: boolean;
 };
 export type PlanItem = {
+  deliverable?: string;
+  acceptanceCriteria?: string[];
+  executionMode?: "ai" | "human";
   title: string;
   description: string;
   ownerId: string;

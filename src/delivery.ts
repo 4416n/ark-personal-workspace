@@ -1,5 +1,6 @@
 import type { Task, ResultVersion, Workspace } from "./domain.ts";
 import { uuid } from "../shared/id.mjs";
+import { reviewBasis } from "../shared/contract.mjs";
 
 export const HISTORY_LIMIT = 12;
 const TASK_HISTORY_CHARS = 160000;
@@ -52,7 +53,11 @@ export function replaceResult(
       ...(previous.resultSources ? { sources: previous.resultSources } : {}),
     });
   }
-  const { resultSources: _sources, ...previousWithoutSources } = previous;
+  const {
+    resultSources: _sources,
+    aiReview: _review,
+    ...previousWithoutSources
+  } = previous;
   return {
     ...previousWithoutSources,
     result: content,
@@ -77,6 +82,10 @@ export function replaceResult(
 
 // Keep form edits, but compare result text with the last staged/saved content.
 export function prepareTaskDraft(base: Task, draft: Task): Task {
+  if (reviewBasis(base) !== reviewBasis(draft)) {
+    const { aiReview: _review, ...rest } = draft;
+    draft = rest;
+  }
   return replaceResult(
     {
       ...draft,
@@ -110,6 +119,7 @@ export function recordReview(
   task: Task,
   action: "approved" | "returned",
   note: string,
+  provenance: { actor?: "human" | "ai"; runId?: string } = {},
 ): Task {
   if (action === "returned" && !note.trim()) throw new Error("请填写返工要求");
   if (action === "approved" && !task.result.trim())
@@ -129,6 +139,8 @@ export function recordReview(
         at: stamp(),
         action,
         note: reviewNote,
+        actor: provenance.actor || "human",
+        ...(provenance.runId ? { runId: provenance.runId } : {}),
         ...(next.resultMeta
           ? {
               versionId: next.resultMeta.id,

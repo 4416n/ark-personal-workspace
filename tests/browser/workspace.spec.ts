@@ -13,6 +13,8 @@ test("创建项目、调整分工、更新任务并刷新保留", async ({ page 
   await page
     .getByLabel("我想实现的目标")
     .fill("两周内开发一个展示个人作品的网站，形成可以发布的首版。");
+  // This case exercises document/task editing; runnable software has its own suite.
+  await page.getByLabel("交付形式", { exact: true }).selectOption("document");
   await page.getByRole("button", { name: "生成执行计划" }).click();
   await expect(
     page.getByRole("dialog", { name: "让合适的伙伴，各展所长" }),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   ArrowLeft,
@@ -16,6 +16,7 @@ import {
   GitBranch,
   ListTodo,
   NotebookPen,
+  Play,
 } from "lucide-react";
 import { useApp, type DialogState } from "./context";
 import { Avatar, Modal, TaskRow, Empty } from "./components";
@@ -49,6 +50,12 @@ import { DeliveryHistory, ProjectRetrospective } from "./delivery-ui";
 import { emptyRetro, type RetroNotes } from "./retrospective";
 import { projectToTemplate } from "./templates";
 import { CancelGeneration, Sources } from "./runs-ui";
+import {
+  AutomationPanel,
+  ContractFields,
+  AiReviewSummary,
+} from "./automation-ui";
+import { deliveryMarkdown } from "../shared/contract.mjs";
 import type { Passage } from "../shared/retrieval.mjs";
 import { DepartmentDetail } from "./organization";
 import { AllocationReview } from "./planning";
@@ -81,7 +88,14 @@ export function Dialogs({
     case "department":
       return <DepartmentDetail name={dialog.name} close={close} />;
     case "project":
-      return <ProjectDetail id={dialog.id} close={close} />;
+      return (
+        <ProjectDetail
+          key={`${dialog.id}-${dialog.section || "list"}`}
+          id={dialog.id}
+          close={close}
+          section={dialog.section}
+        />
+      );
     case "task":
       return (
         <TaskDetail
@@ -109,6 +123,9 @@ export function Dialogs({
       );
   }
 }
+import { FileCode2 } from "lucide-react";
+import { SoftwarePanel, softwareConfirmation } from "./software-ui";
+
 function NewProject({
   close,
   initialGoal = "",
@@ -116,7 +133,8 @@ function NewProject({
   close: () => void;
   initialGoal?: string;
 }) {
-  const { state, update, config, notify, navigate } = useApp();
+  const { state, update, config, notify, navigate, open, syncNow, session } =
+    useApp();
   const [step, setStep] = useState(1);
   const [title, setTitle] = useState(initialGoal.slice(0, 100));
   const [goal, setGoal] = useState(initialGoal);
@@ -125,6 +143,12 @@ function NewProject({
   const [deadline, setDeadline] = useState(dateIn(14));
   const [priority, setPriority] = useState<Priority>("medium");
   const [mode, setMode] = useState<"local" | "ai">("local");
+  const deliveryChosen = useRef(false);
+  const [deliveryType, setDeliveryType] = useState<"software" | "document">(
+    /网站|网页|前端|后端|web|应用|系统|软件/i.test(initialGoal)
+      ? "software"
+      : "document",
+  );
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [error, setError] = useState("");
@@ -137,7 +161,7 @@ function NewProject({
     setError("");
     try {
       const data = await api<{ tasks: PlanItem[] }>("/plan", {
-        goal: `${title}\n${goal}\n验收标准：${successCriteria || "请结合目标给出具体标准"}\n预算：${budget ? `${budget}元` : "未设置"}`,
+        goal: `${title}\n${goal}\n交付形式：${deliveryType === "software" ? "可运行网站，React前端、Express后端、SQLite数据库与Docker部署文件；任务必须围绕实际功能与可测试验收，而不是只写方案文档" : "文档成果"}\n验收标准：${successCriteria || "请结合目标给出具体标准"}\n预算：${budget ? `${budget}元` : "未设置"}`,
         mode,
         members: state.members,
         tasks: state.tasks.map(({ ownerId, status, estimatedHours }) => ({
@@ -159,7 +183,8 @@ function NewProject({
     setPlan((p) =>
       p.map((item, i) => (i === index ? { ...item, ...patch } : item)),
     );
-  const save = () => {
+  const save = async (auto = false) => {
+    if (busy) return;
     if (
       !plan.length ||
       plan.some(
@@ -189,6 +214,7 @@ function NewProject({
       id: projectId,
       title: title.trim(),
       goal: goal.trim(),
+      deliveryType,
       deadline,
       priority,
       status: "active",
@@ -208,6 +234,9 @@ function NewProject({
         .map((n) => taskIds[n]),
       title: item.title.trim(),
       description: item.description,
+      deliverable: item.deliverable,
+      acceptanceCriteria: item.acceptanceCriteria,
+      executionMode: item.executionMode,
       ownerId: item.ownerId,
       status: "todo",
       priority: item.priority,
@@ -218,6 +247,35 @@ function NewProject({
       createdAt,
       demo: false,
     }));
+    if (
+      !projectSchema.safeParse(project).success ||
+      tasks.some((t) => !taskSchema.safeParse(t).success)
+    ) {
+      setError(
+        "请检查交付清单：每项最多 12 条标准，每条不超过 1000 字，并补全有效项目日期与任务内容",
+      );
+      return;
+    }
+    if (
+      state.projects.length >= 2000 ||
+      state.tasks.length + tasks.length > 10000
+    ) {
+      setError("项目或任务数量已达上限");
+      return;
+    }
+    if (auto && (!session?.shared || !config?.configured)) {
+      setError("请先使用电脑共享模式并配置 AI 模型");
+      return;
+    }
+    if (
+      auto &&
+      !confirm(
+        deliveryType === "software"
+          ? softwareConfirmation(title, 1)
+          : "创建后立即自动执行这份计划？\n\n将使用你配置的模型，按依赖生成成果、独立审查；通过则自动完成任务并继续。每项最多返工 1 次，本批总调用上限 30 次。生成、审查及失败尝试均计入，可能产生费用。\n\n需要真实外部操作的任务会停下，不会发布或运行代码。关闭页面仍会继续，服务停止则暂停。可在项目中随时暂停。",
+      )
+    )
+      return;
     update(
       (s) => ({
         ...s,
@@ -226,9 +284,53 @@ function NewProject({
       }),
       `创建项目「${title.trim()}」，规划 ${tasks.length} 个任务`,
     );
-    notify(`项目已创建，${tasks.length} 个任务已加入看板`);
+    if (auto) {
+      setBusy(true);
+      try {
+        const revision = await syncNow();
+        if (deliveryType === "software")
+          await api(`/software/${projectId}/start`, {
+            confirmed: true,
+            allowSandbox: true,
+            revision,
+            maxRepairs: 1,
+          });
+        else
+          await api(`/automation/${projectId}/start`, {
+            confirmed: true,
+            revision,
+            mode: "auto",
+            maxCalls: 30,
+            maxReworks: 1,
+          });
+        notify(
+          deliveryType === "software"
+            ? "项目已创建，正在后台生成、测试与打包工程"
+            : "项目已创建，正在后台生成与审查交付物",
+        );
+      } catch (e) {
+        notify(`项目已创建，但自动启动未成功：${(e as Error).message}`, true);
+      } finally {
+        setBusy(false);
+      }
+      close();
+      navigate("projects");
+      open({
+        type: "project",
+        id: projectId,
+        section: deliveryType === "software" ? "software" : "auto",
+      });
+      return;
+    }
+    notify(
+      deliveryType === "software"
+        ? "项目已创建，在「工程交付」生成完整网站"
+        : `项目已创建，${tasks.length} 个任务已加入看板；进入项目「自动执行」可连续生成与审查`,
+    );
     close();
     navigate("projects");
+    if (deliveryType === "software")
+      open({ type: "project", id: projectId, section: "software" });
   };
   return (
     <Modal
@@ -237,7 +339,7 @@ function NewProject({
       subtitle={
         step === 1
           ? "写下想实现的事，剩下的我们一起梳理。"
-          : "检查任务与分工，你始终拥有最后的决定权。"
+          : "确认交付物、验收清单与分工。只创建计划，或确认后立即自动执行。"
       }
       onClose={() => {
         if (!busy) close();
@@ -266,7 +368,17 @@ function NewProject({
                 required
                 maxLength={100}
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  if (!deliveryChosen.current)
+                    setDeliveryType(
+                      /网站|网页|前端|后端|web|应用|系统|软件/i.test(
+                        e.target.value + " " + goal,
+                      )
+                        ? "software"
+                        : "document",
+                    );
+                }}
                 placeholder="例如：30 天打造我的个人知识库"
               />
             </label>
@@ -278,9 +390,42 @@ function NewProject({
                 maxLength={10000}
                 rows={4}
                 value={goal}
-                onChange={(e) => setGoal(e.target.value)}
+                onChange={(e) => {
+                  setGoal(e.target.value);
+                  if (!deliveryChosen.current)
+                    setDeliveryType(
+                      /网站|网页|前端|后端|web|应用|系统|软件/i.test(
+                        title + " " + e.target.value,
+                      )
+                        ? "software"
+                        : "document",
+                    );
+                }}
                 placeholder="希望达到什么结果？有哪些时间、资源或风格要求？越具体，规划越有帮助。"
               />
+            </label>
+            <label className="field full">
+              交付形式
+              <select
+                aria-label="交付形式"
+                value={deliveryType}
+                onChange={(e) => {
+                  deliveryChosen.current = true;
+                  setDeliveryType(e.target.value as "software" | "document");
+                }}
+              >
+                <option value="software">
+                  完整网站工程：前端 + 后端 + 数据库 + 部署文件
+                </option>
+                <option value="document">
+                  文档成果：方案 / 内容 / 研究资料
+                </option>
+              </select>
+              <small>
+                {deliveryType === "software"
+                  ? "按完整工程生成、隔离构建测试、失败自动修复；交付可下载源码，不是 Markdown。首版支持 React + Express + SQLite，不含实际上线。"
+                  : "生成正文、AI 审查与交付包；软件项目请选择完整网站工程。"}
+              </small>
             </label>
             <label className="field">
               计划完成日期
@@ -450,10 +595,28 @@ function NewProject({
               <ArrowLeft size={15} />
               调整目标
             </button>
-            <button className="button primary" onClick={save}>
+            <button
+              className="button primary"
+              disabled={busy}
+              onClick={() => void save()}
+            >
               <Check size={16} />
               确认计划，开始推进
             </button>
+            {session?.shared && config?.configured && (
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() => void save(true)}
+              >
+                <Play size={16} />
+                {busy
+                  ? "正在启动…"
+                  : deliveryType === "software"
+                    ? "创建并交付工程"
+                    : "创建并自动执行"}
+              </button>
+            )}
           </footer>
         </>
       )}
@@ -461,7 +624,15 @@ function NewProject({
   );
 }
 
-function ProjectDetail({ id, close }: { id: string; close: () => void }) {
+function ProjectDetail({
+  id,
+  close,
+  section,
+}: {
+  id: string;
+  close: () => void;
+  section?: "auto" | "software";
+}) {
   const { state, update, open, notify } = useApp();
   const p = state.projects.find((p) => p.id === id);
   const [editing, setEditing] = useState(false);
@@ -472,7 +643,9 @@ function ProjectDetail({ id, close }: { id: string; close: () => void }) {
     p?.successCriteria || "",
   );
   const [budget, setBudget] = useState(p?.budget || 0);
-  const [taskView, setTaskView] = useState("list");
+  const [taskView, setTaskView] = useState(
+    section || (p?.deliveryType === "software" ? "software" : "list"),
+  );
   const [retroNotes, setRetroNotes] = useState<RetroNotes>(() => ({
     outcome: p?.retrospective?.outcome || "",
     lessons: p?.retrospective?.lessons || "",
@@ -674,6 +847,22 @@ function ProjectDetail({ id, close }: { id: string; close: () => void }) {
         <div className="section-heading">
           <div className="project-task-switch" aria-label="项目任务视图">
             <button
+              className={taskView === "software" ? "active" : ""}
+              aria-pressed={taskView === "software"}
+              onClick={() => selectTaskView("software")}
+            >
+              <FileCode2 size={14} />
+              工程交付
+            </button>
+            <button
+              className={taskView === "auto" ? "active" : ""}
+              aria-pressed={taskView === "auto"}
+              onClick={() => selectTaskView("auto")}
+            >
+              <Play size={14} />
+              自动执行
+            </button>
+            <button
               className={taskView === "list" ? "active" : ""}
               aria-pressed={taskView === "list"}
               onClick={() => selectTaskView("list")}
@@ -708,7 +897,11 @@ function ProjectDetail({ id, close }: { id: string; close: () => void }) {
             添加任务
           </button>
         </div>
-        {taskView === "retro" ? (
+        {taskView === "software" ? (
+          <SoftwarePanel projectId={id} />
+        ) : taskView === "auto" ? (
+          <AutomationPanel projectId={id} />
+        ) : taskView === "retro" ? (
           <ProjectRetrospective
             project={p}
             tasks={tasks}
@@ -783,13 +976,13 @@ function ProjectDetail({ id, close }: { id: string; close: () => void }) {
           onClick={() =>
             download(
               `${p.title}.md`,
-              `# ${p.title}\n\n${p.goal}\n\n验收标准：${p.successCriteria || "未设置"}\n计划预算：¥${p.budget || 0}\n\n截止日期：${p.deadline}\n\n${tasks.map((t) => `## ${t.title}\n\n状态：${statusText[t.status]}\n\n${t.description}\n\n${t.result}`).join("\n\n---\n\n")}`,
+              deliveryMarkdown(p, tasks),
               "text/markdown",
             )
           }
         >
           <Download size={16} />
-          导出项目
+          导出任务文档
         </button>
       </footer>
     </Modal>
@@ -953,6 +1146,9 @@ function TaskDetail({
           id: task.id,
           title: task.title,
           description: task.description,
+          deliverable: task.deliverable,
+          acceptanceCriteria: task.acceptanceCriteria,
+          executionMode: task.executionMode,
           result: task.result,
           reviewNote: task.reviewNote,
         },
@@ -1083,6 +1279,7 @@ function TaskDetail({
               ))}
             </select>
           </label>
+          <ContractFields task={task} change={change} />
           <label className="field">
             任务状态
             <select
@@ -1163,6 +1360,7 @@ function TaskDetail({
             </div>
           )}
           <div className="task-deliverable full">
+            <AiReviewSummary task={task} />
             <div className="section-heading">
               <h2>
                 <FileText size={17} />

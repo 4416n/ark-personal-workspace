@@ -1,0 +1,342 @@
+/* Engineering desk: same graphite/sage office, with a real source workspace. */
+.software-panel {
+  margin-top: 18px;
+  min-width: 0;
+  color: #30353d;
+}
+.software-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.software-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 20px;
+  margin: 0 0 9px;
+}
+.software-heading p,
+.software-note {
+  font-size: 13px;
+  color: #647489;
+  line-height: 1.8;
+  margin: 8px 0 16px;
+  overflow-wrap: anywhere;
+}
+.software-heading > .pill {
+  flex-shrink: 0;
+}
+.software-stack {
+  display: flex;
+  flex-wrap: wrap;
+  border-block: 1px solid #e8eaed;
+  gap: 12px 24px;
+  padding: 14px 0;
+  color: #52645a;
+  font-size: 13px;
+}
+.software-environment {
+  padding: 12px 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #647489;
+  border-bottom: 1px solid #e8eaed;
+}
+.software-environment summary,
+.software-logs summary {
+  cursor: pointer;
+  color: #30353d;
+  font-weight: 600;
+}
+.software-environment p {
+  max-width: 75ch;
+  overflow-wrap: anywhere;
+}
+.software-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.software-controls label,
+.software-version label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.software-panel select {
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid #dde2e6;
+  border-radius: 7px;
+  padding: 8px;
+  background: white;
+  color: #394d43;
+}
+.software-version {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 24px 0 12px;
+}
+.software-version > small {
+  color: #647489;
+  white-space: nowrap;
+}
+.software-workspace {
+  display: grid;
+  grid-template-columns: 205px minmax(0, 1fr);
+  border: 1px solid #dde2e6;
+  border-radius: 10px;
+  overflow: hidden;
+  height: 420px;
+  background: white;
+}
+.software-files {
+  overflow: auto;
+  border-right: 1px solid #dde2e6;
+  background: #f7f9f8;
+  padding: 12px 6px;
+}
+.software-files > strong {
+  display: block;
+  padding: 3px 8px 12px;
+  font-size: 12px;
+  color: #647489;
+}
+.software-files button {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 9px 8px;
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.software-files button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.software-files button small {
+  color: #7c8981;
+}
+.software-files button.selected {
+  background: #e4ece7;
+  color: #2d6045;
+  font-weight: 600;
+}
+.software-files button:hover {
+  background: #edf1ee;
+}
+.software-source {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #fcfdfc;
+}
+.software-source > header {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e8eaed;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.software-source > header small {
+  color: #647489;
+  white-space: nowrap;
+}
+.software-source pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  flex: 1;
+  margin: 0;
+  padding: 18px;
+  font-size: 11px;
+  line-height: 1.85;
+  tab-size: 2;
+  color: #344c41;
+}
+.software-hash {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: #647489;
+  overflow-wrap: anywhere;
+  margin: 10px 0 22px;
+}
+.software-hash code {
+  min-width: 0;
+}
+.software-checks h4 {
+  font-size: 14px;
+  margin: 20px 0 8px;
+}
+.software-checks details {
+  border-bottom: 1px solid #e8eaed;
+}
+.software-checks summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 12px;
+}
+.software-checks summary > span {
+  flex: 1;
+}
+.software-checks summary > b {
+  font-size: 11px;
+  color: #52645a;
+}
+.software-checks pre,
+.software-logs pre {
+  white-space: pre-wrap;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  background: #f4f6f5;
+  padding: 14px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.software-logs {
+  font-size: 12px;
+  margin-top: 18px;
+}
+.software-preview {
+  margin: 24px 0 14px;
+}
+.software-preview img {
+  width: 100%;
+  display: block;
+  border: 1px solid #dde2e6;
+  border-radius: 8px;
+}
+.software-preview figcaption {
+  font-size: 11px;
+  color: #647489;
+  margin-top: 10px;
+}
+.software-empty {
+  padding: 36px 20px;
+  text-align: center;
+  border: 1px dashed #cfd9d2;
+  border-radius: 10px;
+  color: #647489;
+}
+.software-empty > svg {
+  color: #52645a;
+}
+.software-empty h4 {
+  font-size: 16px;
+  color: #30353d;
+}
+.software-empty p {
+  font-size: 13px;
+  line-height: 1.9;
+  max-width: 46ch;
+  margin: 0 auto;
+}
+.software-live {
+  background: #edf3ee;
+  border-left: 3px solid #5e806a;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+@media (max-width: 640px) {
+  .software-heading {
+    flex-direction: column;
+  }
+  .software-heading h3 {
+    font-size: 18px;
+  }
+  .software-controls > * {
+    flex: 1 1 auto;
+  }
+  .software-controls label {
+    justify-content: space-between;
+  }
+  .software-controls button {
+    justify-content: center;
+  }
+  .software-version {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .software-version label {
+    width: 100%;
+  }
+  .software-version select {
+    flex: 1;
+  }
+  .software-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .software-files {
+    max-height: 165px;
+    border-right: 0;
+    border-bottom: 1px solid #dde2e6;
+  }
+  .software-source {
+    height: 330px;
+  }
+  .software-hash code {
+    word-break: break-all;
+  }
+  .software-environment code {
+    word-break: break-word;
+  }
+}
+.software-base {
+  padding: 14px 0;
+  border-bottom: 1px solid #e8eaed;
+}
+.software-base label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.software-base select {
+  flex: 1;
+}
+.software-base > small,
+.software-lineage {
+  display: block;
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.8;
+  color: #647489;
+  overflow-wrap: anywhere;
+}
+.software-checks h4 small {
+  font-size: 11px;
+  font-weight: 400;
+  color: #647489;
+}
+@media (max-width: 640px) {
+  .software-base label {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+}

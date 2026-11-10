@@ -8,6 +8,11 @@ import { openDatabase } from "./database.mjs";
 import { accessControl, lanAddresses } from "./access.mjs";
 import { executionLog } from "./runs.mjs";
 import { retrieve, retrievalContext } from "../shared/retrieval.mjs";
+import { projectAutomation } from "./automation.mjs";
+import { softwareDelivery } from "./software.mjs";
+import { generationMessages } from "./work-output.mjs";
+import { stateSchema } from "../src/domain.ts";
+import { reviewBasis } from "../shared/contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
@@ -59,6 +64,7 @@ export function createApp({
   shared = false,
   lan = false,
   dataDir = path.dirname(configPath),
+  softwareOptions = {},
 } = {}) {
   const app = express();
   app.disable("x-powered-by");
@@ -69,7 +75,31 @@ export function createApp({
     initialized: () => !!database?.read().state,
   });
   const runs = executionLog(database);
-  app.locals.close = () => database?.close();
+  const automation = projectAutomation({
+    database,
+    runs,
+    completion,
+    readConfig,
+    isSoftwareActive: () => !!software.active(),
+  });
+  const software = softwareDelivery({
+    database,
+    runs,
+    completion,
+    readConfig,
+    isDocumentActive: () => automation.active().length > 0,
+    ...softwareOptions,
+  });
+  let closePromise;
+  app.locals.close = () => {
+    if (closePromise) return closePromise;
+    const stopped = software.close();
+    automation.close();
+    runs.close();
+    database?.close();
+    closePromise = Promise.resolve(stopped);
+    return closePromise;
+  };
   app.use("/api", access.guard);
   app.use(express.json({ limit: "10mb" }));
   access.install(app);
@@ -91,7 +121,40 @@ export function createApp({
           .status(403)
           .json({ error: "请先在电脑打开工作台，完成数据初始化" });
       const revision = z.number().int().min(0).parse(req.body.revision);
-      res.json(database.save(req.body.state, revision));
+      const next = stateSchema.parse(req.body.state);
+      const current = database.read();
+      // Compare-and-swap must win over a lock error, so stale clients merge first.
+      if (revision !== current.revision)
+        return res.status(409).json({ error: "工作台已更新，请合并后保存" });
+      automation.guardWrite(next);
+      software.guardWrite(next);
+      if (current.state) {
+        const previousTasks = new Map(
+          current.state.tasks.map((t) => [t.id, t]),
+        );
+        const previousProjects = new Map(
+          current.state.projects.map((p) => [p.id, p]),
+        );
+        const nextProjects = new Map(next.projects.map((p) => [p.id, p]));
+        next.tasks = next.tasks.map((t) => {
+          const old = previousTasks.get(t.id);
+          const p = nextProjects.get(t.projectId);
+          const oldProject = previousProjects.get(old?.projectId);
+          if (
+            old &&
+            t.aiReview &&
+            (reviewBasis(old) !== reviewBasis(t) ||
+              t.result !== old.result ||
+              p?.goal !== oldProject?.goal ||
+              p?.successCriteria !== oldProject?.successCriteria)
+          ) {
+            const { aiReview: _review, ...rest } = t;
+            return rest;
+          }
+          return t;
+        });
+      }
+      res.json(database.save(next, revision));
     }),
   );
   app.get("/api/backups", (_req, res) => res.json(database?.backups() || []));
@@ -116,6 +179,94 @@ export function createApp({
   app.post("/api/runs/:id/cancel", (req, res) =>
     res.json({ cancelled: runs.cancel(req.params.id) }),
   );
+  app.get("/api/automation/:projectId", (req, res) =>
+    res.json(automation.get(req.params.projectId)),
+  );
+  app.get("/api/automations", (_req, res) =>
+    res.json([
+      ...automation.active(),
+      ...(software.active()
+        ? [
+            {
+              ...software.active(),
+              kind: "software",
+              note: "正在生成、隔离测试或修复工程，关闭页面仍会继续",
+            },
+          ]
+        : []),
+    ]),
+  );
+  app.post(
+    "/api/automation/:projectId/start",
+    asyncRoute(async (req, res) => {
+      if (software.active())
+        return res
+          .status(409)
+          .json({ error: "工程交付正在执行，请先停止或等待完成" });
+      res.json(await automation.start(req.params.projectId, req.body));
+    }),
+  );
+  app.post(
+    "/api/automation/:projectId/resume",
+    asyncRoute(async (req, res) => {
+      if (software.active())
+        return res
+          .status(409)
+          .json({ error: "工程交付正在执行，请先停止或等待完成" });
+      res.json(await automation.start(req.params.projectId, req.body, true));
+    }),
+  );
+  app.post("/api/automation/:projectId/pause", (req, res) =>
+    res.json(automation.pause(req.params.projectId)),
+  );
+  app.get(
+    "/api/software-capabilities",
+    asyncRoute(async (_req, res) => res.json(await software.capabilities())),
+  );
+  app.get("/api/software/:projectId", (req, res) =>
+    res.json(software.list(req.params.projectId)),
+  );
+  app.post(
+    "/api/software/:projectId/start",
+    asyncRoute(async (req, res) =>
+      res.json(await software.start(req.params.projectId, req.body)),
+    ),
+  );
+  app.get("/api/software-builds/:id", (req, res) =>
+    res.json(software.detail(req.params.id)),
+  );
+  app.post(
+    "/api/software-builds/:id/revalidate",
+    asyncRoute(async (req, res) =>
+      res.json(await software.revalidate(req.params.id, req.body)),
+    ),
+  );
+  app.get("/api/software-builds/:id/file", (req, res) =>
+    res.json(software.file(req.params.id, req.query.path)),
+  );
+  app.post("/api/software-builds/:id/cancel", (req, res) =>
+    res.json(software.cancel(req.params.id)),
+  );
+  app.get("/api/software-builds/:id/download", (req, res) =>
+    res
+      .set({
+        "Content-Type": "application/zip",
+        "Content-Disposition": 'attachment; filename="ark-project.zip"',
+        "Cache-Control": "no-store",
+      })
+      .send(software.download(req.params.id)),
+  );
+  app.get("/api/software-builds/:id/screenshot", (req, res) => {
+    const screenshot = software.screenshot(req.params.id);
+    if (!screenshot) return res.status(404).json({ error: "没有运行截图" });
+    res
+      .set({
+        "Content-Type": "image/png",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      })
+      .send(Buffer.from(screenshot, "base64"));
+  });
   app.post(
     "/api/retrieve",
     asyncRoute(async (req, res) => {
@@ -154,9 +305,16 @@ export function createApp({
   });
   async function completion(
     messages,
-    { maxTokens = 3000, temperature = 0.6, req } = {},
+    {
+      maxTokens = 3000,
+      maxChars = 100000,
+      timeoutMs = 90000,
+      temperature = 0.6,
+      req,
+      config: pinnedConfig,
+    } = {},
   ) {
-    const config = await readConfig();
+    const config = pinnedConfig || (await readConfig());
     if (req?.run) {
       req.run.model = config.model;
       req.run.provider = config.provider;
@@ -184,8 +342,8 @@ export function createApp({
             stream: false,
           }),
           signal: req?.runSignal
-            ? AbortSignal.any([req.runSignal, AbortSignal.timeout(90000)])
-            : AbortSignal.timeout(90000),
+            ? AbortSignal.any([req.runSignal, AbortSignal.timeout(timeoutMs)])
+            : AbortSignal.timeout(timeoutMs),
           redirect: "error",
         },
       );
@@ -193,7 +351,9 @@ export function createApp({
       throw new Error(
         e.name === "TimeoutError"
           ? "模型响应超时，请重试或切换模型。"
-          : "无法连接模型服务，请检查 Base URL 和网络。",
+          : req?.runSignal?.aborted
+            ? "已取消生成"
+            : "无法连接模型服务，请检查 Base URL 和网络。",
       );
     }
     if (!response.ok) {
@@ -221,9 +381,15 @@ export function createApp({
       req.saveRun();
     }
     const content = data.choices?.[0]?.message?.content;
+    if (data.choices?.[0]?.finish_reason === "length")
+      throw new Error(
+        "模型输出达到长度限制，内容可能不完整；未保存为交付物，请缩小任务范围后重试",
+      );
     if (typeof content !== "string" || !content.trim())
       throw new Error("模型返回为空，请检查模型是否支持对话接口。");
-    return content.slice(0, 100000);
+    if (content.length > maxChars)
+      throw new Error("模型输出超过本次交付大小上限，请缩小项目首版范围");
+    return content;
   }
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get(
@@ -324,7 +490,7 @@ export function createApp({
           {
             role: "system",
             content:
-              '你是个人项目规划师。根据目标、验收标准、预算生成 3 至 8 个任务，每个任务有具体可审阅交付物。只返回 JSON：{"tasks":[{"title":"任务名","description":"具体行动、交付物和验收标准","skills":["所需技能"],"priority":"high|medium|low","estimatedHours":2,"dependsOn":[]}]}。dependsOn 是前置任务的数组下标，从0起，只能引用当前任务之前的下标；允许独立任务并行。尽量让不同专业部门协作。任务可由 AI 提供文字、代码、方案，也可能需要用户亲自操作。不要假定 AI 能直接发布内容、操作外部系统或完成现实行为。不得声称已执行。',
+              '你是个人项目规划师。根据目标、验收标准、预算生成 3 至 8 个任务，每个任务有具体可审阅交付物。只返回 JSON：{"tasks":[{"title":"任务名","description":"具体行动与要求","deliverable":"具体交付物名称和格式","acceptanceCriteria":["可检查的标准1","标准2"],"executionMode":"ai|human","skills":["所需技能"],"priority":"high|medium|low","estimatedHours":2,"dependsOn":[]}]}。dependsOn 是前置任务的数组下标，从0起，只能引用当前任务之前的下标；允许独立任务并行。尽量让不同专业部门协作。executionMode=ai 只适用于能以文字或代码草稿交付的任务；需要发布、部署、浏览网页验证、实际运行或现实动作的任务必须标为human。不要把完整可运行的产品偷换为仅提供方案。不要假定 AI 能直接发布内容、操作外部系统或完成现实行为。不得声称已执行。',
           },
           {
             role: "user",
@@ -355,6 +521,12 @@ export function createApp({
       const body = z
         .object({
           task: z.object({
+            deliverable: z.string().max(300).optional(),
+            acceptanceCriteria: z
+              .array(z.string().min(1).max(1000))
+              .max(12)
+              .optional(),
+            executionMode: z.enum(["ai", "human"]).optional(),
             title: z.string().max(200),
             description: z.string().max(100000),
             result: z.string().max(100000).optional(),
@@ -380,24 +552,10 @@ export function createApp({
           knowledge: knowledgeSchema.optional(),
         })
         .parse(req.body);
-      const content = await completion(
-        [
-          {
-            role: "system",
-            content: `${body.member.prompt || `你是${body.member.role}。`}\n工作风格：${body.member.traits?.join("、") || "清晰、务实"}\n输出 Markdown 交付物，直接完成可以用文字完成的任务，避免只重复待办。必要时写清假设。不能访问外部网站或执行代码，不得声称已经在外部创建、部署、发送或验证任何内容。对用户提供的背景资料仅提取相关信息。`,
-          },
-          {
-            role: "user",
-            content: `项目：${body.project.title}\n目标：${body.project.goal}\n项目验收标准：${body.project.successCriteria || "未设置"}\n项目计划预算：${body.project.budget ?? "未设置"}\n任务：${body.task.title}\n交付要求：${body.task.description}\n上一版成果：${body.task.result?.slice(0, 16000) || "无"}\n审批修改意见：${body.task.reviewNote || "无"}\n已完成的前置成果：${
-              body.dependencies
-                ?.map((d) => `${d.title}：${d.result.slice(0, 5000)}`)
-                .join("\n")
-                .slice(0, 18000) || "无"
-            }\n背景资料：\n${knowledgeContext(req, `${body.task.title} ${body.task.description}`, body.project.id)}`,
-          },
-        ],
-        { maxTokens: 5000, req },
-      );
+      const content = await completion(generationMessages(body, req), {
+        maxTokens: 6000,
+        req,
+      });
       res.json({ content, source: "ai" });
     }),
   );
@@ -481,13 +639,19 @@ if (
       for (const x of lanAddresses())
         console.log(`手机访问：http://${x.address}:${port}（需要连接码）`);
   });
+  let shuttingDown = false;
   for (const signal of ["SIGINT", "SIGTERM"])
-    process.on(signal, () =>
-      server.close(() => {
-        app.locals.close();
-        process.exit(0);
-      }),
-    );
+    process.on(signal, async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      // Abort model calls and wait for isolated process-tree cleanup before exiting.
+      const stopped = app.locals.close();
+      await Promise.all([
+        stopped,
+        new Promise((resolve) => server.close(resolve)),
+      ]);
+      process.exit(0);
+    });
   server.on("error", (err) => {
     console.error(
       err.code === "EADDRINUSE"

@@ -13,6 +13,8 @@ export function openDatabase(directory) {
     CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER, body TEXT, at TEXT);
     CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, revision INTEGER, body TEXT, at TEXT, label TEXT);
     CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, body TEXT);
+    CREATE TABLE IF NOT EXISTS automations (project_id TEXT PRIMARY KEY, body TEXT);
+    CREATE TABLE IF NOT EXISTS software_builds (id TEXT PRIMARY KEY, project_id TEXT, body TEXT);
   `);
   const read = () => {
     const row = db.prepare("SELECT * FROM workspace WHERE id=1").get();
@@ -36,7 +38,7 @@ export function openDatabase(directory) {
       label,
     );
     db.exec(
-      "DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY at DESC LIMIT 50)",
+      "DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY rowid DESC LIMIT 50)",
     );
     return id;
   };
@@ -61,9 +63,9 @@ export function openDatabase(directory) {
       db.exec("COMMIT");
       // Daily standalone JSON also survives accidental database replacement.
       const daily = path.join(directory, "daily-backups");
-      fs.mkdirSync(daily, { recursive: true, mode: 0o700 });
       const dailyFile = path.join(daily, `${at.slice(0, 10)}.json`);
       try {
+        fs.mkdirSync(daily, { recursive: true, mode: 0o700 });
         if (!fs.existsSync(dailyFile))
           fs.writeFileSync(dailyFile, JSON.stringify(parsed), {
             mode: 0o600,
@@ -86,19 +88,16 @@ export function openDatabase(directory) {
     }
   };
   const saveRun = (run) => {
-    db.prepare("INSERT OR REPLACE INTO runs VALUES (?, ?)").run(
-      run.id,
-      JSON.stringify(run),
-    );
+    db.prepare(
+      "INSERT INTO runs VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+    ).run(run.id, JSON.stringify(run));
     db.exec(
-      "DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY json_extract(body, '$.startedAt') DESC LIMIT 100)",
+      "DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY rowid DESC LIMIT 100)",
     );
   };
   const listRuns = () =>
     db
-      .prepare(
-        "SELECT body FROM runs ORDER BY json_extract(body, '$.startedAt') DESC LIMIT 100",
-      )
+      .prepare("SELECT body FROM runs ORDER BY rowid DESC LIMIT 100")
       .all()
       .map((r) => JSON.parse(r.body));
   for (const r of listRuns())
@@ -110,15 +109,52 @@ export function openDatabase(directory) {
         finishedAt: new Date().toISOString(),
       });
   return {
+    saveBuild: (build) => {
+      db.prepare(
+        "INSERT INTO software_builds VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+      ).run(build.id, build.projectId, JSON.stringify(build));
+      db.prepare(
+        "DELETE FROM software_builds WHERE project_id=? AND id NOT IN (SELECT id FROM software_builds WHERE project_id=? ORDER BY rowid DESC LIMIT 5)",
+      ).run(build.projectId, build.projectId);
+      db.exec(
+        "DELETE FROM software_builds WHERE id NOT IN (SELECT id FROM software_builds ORDER BY rowid DESC LIMIT 30)",
+      );
+    },
+    getBuild: (id) => {
+      const r = db
+        .prepare("SELECT body FROM software_builds WHERE id=?")
+        .get(id);
+      return r ? JSON.parse(r.body) : null;
+    },
+    listBuilds: (projectId) =>
+      (projectId
+        ? db
+            .prepare(
+              "SELECT body FROM software_builds WHERE project_id=? ORDER BY rowid DESC",
+            )
+            .all(projectId)
+        : db
+            .prepare("SELECT body FROM software_builds ORDER BY rowid DESC")
+            .all()
+      ).map((r) => JSON.parse(r.body)),
     read,
     save,
     snapshot,
     saveRun,
     listRuns,
+    listAutomations: () =>
+      db
+        .prepare("SELECT body FROM automations")
+        .all()
+        .map((r) => JSON.parse(r.body)),
+    saveAutomation: (job) =>
+      db
+        .prepare("INSERT OR REPLACE INTO automations VALUES (?, ?)")
+        .run(job.projectId, JSON.stringify(job)),
     backups: () =>
       db
         .prepare(
-          "SELECT id, revision, at, label, length(body) AS size FROM snapshots ORDER BY at DESC",
+          "SELECT id, revision, at, label, length(body) AS size FROM snapshots ORDER BY rowid DESC",
         )
         .all(),
     backup: (id) => {

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 export function executionLog(database) {
+  let closed = false;
   const memory = new Map();
   const controllers = new Map();
   const list = () =>
     database ? database.listRuns() : [...memory.values()].reverse();
   const save = (r) => {
+    if (closed) return;
     if (database) database.saveRun(r);
     else {
       memory.set(r.id, r);
@@ -71,6 +73,70 @@ export function executionLog(database) {
     };
   }
   return {
+    close: () => {
+      for (const [id, controller] of controllers) {
+        controller.abort();
+        const run = get(id);
+        if (run?.status === "running")
+          save({
+            ...run,
+            status: "cancelled",
+            error: "电脑服务已停止",
+            finishedAt: new Date().toISOString(),
+          });
+      }
+      closed = true;
+    },
+    // Background calls share the same concurrency budget and audit log as UI calls.
+    run: async (meta, handler, signal) => {
+      if (controllers.size >= 3)
+        throw new Error("已有 3 项 AI 任务执行中，请稍后恢复自动执行");
+      const controller = new AbortController();
+      const run = {
+        ...meta,
+        id: randomUUID(),
+        startedAt: new Date().toISOString(),
+        status: "running",
+        sources: [],
+      };
+      controllers.set(run.id, controller);
+      try {
+        save(run);
+        const context = {
+          run,
+          runSignal: signal
+            ? AbortSignal.any([signal, controller.signal])
+            : controller.signal,
+          saveRun: () => save(run),
+        };
+        context.runSignal.throwIfAborted();
+        const output = await handler(context);
+        context.runSignal.throwIfAborted();
+        Object.assign(run, {
+          status: "succeeded",
+          output,
+          finishedAt: new Date().toISOString(),
+        });
+        save(run);
+        return run;
+      } catch (error) {
+        Object.assign(run, {
+          status:
+            signal?.aborted || controller.signal.aborted
+              ? "cancelled"
+              : "failed",
+          error:
+            signal?.aborted || controller.signal.aborted
+              ? "已取消生成"
+              : error.message,
+          finishedAt: new Date().toISOString(),
+        });
+        save(run);
+        throw error;
+      } finally {
+        controllers.delete(run.id);
+      }
+    },
     track,
     list,
     get,

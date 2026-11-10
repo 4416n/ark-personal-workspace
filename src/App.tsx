@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AutomationStrip } from "./automation-ui";
 import {
   FolderKanban,
   ListTodo,
@@ -62,6 +63,7 @@ export default function App() {
     conflict,
     resolve,
     bootError,
+    syncNow,
   } = useWorkspace();
   const [page, setPage] = useState<Page>(currentPage);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -175,6 +177,7 @@ export default function App() {
         open: openDialog,
         notify,
         session,
+        syncNow,
       }}
     >
       <div className="app-shell">
@@ -333,6 +336,7 @@ export default function App() {
             </div>
           </header>
           <main className="page-content">
+            <AutomationStrip />
             {session.shared && (
               <div
                 className={`sync-status ${conflict || status.includes("中断") ? "attention" : ""}`}
@@ -423,7 +427,7 @@ export default function App() {
             </span>
             <span>
               你来决策，团队来协作。
-              <span className="footer-brand">BOSS WORKSPACE 3.0</span>
+              <span className="footer-brand">BOSS WORKSPACE 3.2.1</span>
             </span>
           </footer>
         </div>

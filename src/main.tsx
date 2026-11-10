@@ -7,6 +7,8 @@ import "./boss.css";
 import "./execution.css";
 import "./delivery.css";
 import "./expansion.css";
+import "./automation.css";
+import "./software.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
