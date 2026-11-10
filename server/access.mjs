@@ -130,5 +130,14 @@ export function accessControl({ lan, shared, initialized }) {
       res.json({ ok: true });
     });
   }
-  return { guard, install, localOnly, local };
+  return {
+    guard,
+    install,
+    localOnly,
+    local,
+    revoke: () => {
+      sessions.clear();
+      pairing = null;
+    },
+  };
 }

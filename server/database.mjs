@@ -2,7 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { stateSchema } from "../src/domain.ts";
+import { stateSchema, emptyWorkspace } from "../src/domain.ts";
+import { protectedBuilds, retainedBuildIds } from "./build-policy.mjs";
 import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 
 export function openDatabase(directory) {
@@ -111,18 +112,142 @@ export function openDatabase(directory) {
         error: "电脑服务重启，执行已中断",
         finishedAt: new Date().toISOString(),
       });
-  return {
-    saveBuild: (build) => {
-      db.prepare(
-        "INSERT INTO software_builds VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
-      ).run(build.id, build.projectId, JSON.stringify(build));
-      db.prepare(
-        "DELETE FROM software_builds WHERE project_id=? AND id NOT IN (SELECT id FROM software_builds WHERE project_id=? ORDER BY rowid DESC LIMIT 5)",
-      ).run(build.projectId, build.projectId);
-      db.exec(
-        "DELETE FROM software_builds WHERE id NOT IN (SELECT id FROM software_builds ORDER BY rowid DESC LIMIT 30)",
+  const dump = () => {
+    const bytes = [
+      "workspace",
+      "snapshots",
+      "runs",
+      "automations",
+      "software_builds",
+    ].reduce(
+      (sum, table) =>
+        sum +
+        Number(
+          db
+            .prepare(
+              `SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS size FROM ${table}`,
+            )
+            .get().size,
+        ),
+      0,
+    );
+    if (bytes > 250 * 1024 * 1024)
+      throw Object.assign(
+        new Error(
+          "备份数据超过容量上限，请使用 SQLite 在线备份；未截断或删除任何数据",
+        ),
+        { status: 413 },
       );
+    db.exec("BEGIN");
+    try {
+      const current = read();
+      const result = {
+        workspace: current.state ? current : null,
+        snapshots: db
+          .prepare("SELECT * FROM snapshots ORDER BY rowid")
+          .all()
+          .map(({ body, ...r }) => ({ ...r, state: JSON.parse(body) })),
+        runs: db
+          .prepare("SELECT body FROM runs ORDER BY rowid")
+          .all()
+          .map((r) => JSON.parse(r.body)),
+        automations: db
+          .prepare("SELECT body FROM automations ORDER BY rowid")
+          .all()
+          .map((r) => JSON.parse(r.body)),
+        builds: db
+          .prepare("SELECT body FROM software_builds ORDER BY rowid")
+          .all()
+          .map((r) => JSON.parse(r.body)),
+      };
+      db.exec("COMMIT");
+      return result;
+    } catch (e) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw e;
+    }
+  };
+  const restore = (data, expected) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (read().revision !== expected)
+        throw Object.assign(new Error("数据已变化，请重新预览备份"), {
+          status: 409,
+        });
+      for (const table of [
+        "workspace",
+        "snapshots",
+        "runs",
+        "automations",
+        "software_builds",
+      ])
+        db.exec(`DELETE FROM ${table}`);
+      // Monotonic revisions prevent an old browser from overwriting the restore.
+      db.prepare("INSERT INTO workspace VALUES (1, ?, ?, ?)").run(
+        expected + 1,
+        JSON.stringify(data.workspace?.state || emptyWorkspace()),
+        new Date().toISOString(),
+      );
+      for (const r of data.snapshots)
+        db.prepare("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)").run(
+          r.id,
+          r.revision,
+          JSON.stringify(r.state),
+          r.at,
+          r.label,
+        );
+      for (const r of data.runs)
+        db.prepare("INSERT INTO runs VALUES (?, ?)").run(
+          r.id,
+          JSON.stringify(r),
+        );
+      for (const r of data.automations)
+        db.prepare("INSERT INTO automations VALUES (?, ?)").run(
+          r.projectId,
+          JSON.stringify(r),
+        );
+      for (const r of data.builds)
+        db.prepare("INSERT INTO software_builds VALUES (?, ?, ?)").run(
+          r.id,
+          r.projectId,
+          JSON.stringify(r),
+        );
+      db.exec("COMMIT");
+      return read();
+    } catch (e) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw e;
+    }
+  };
+  return {
+    dump,
+    restore,
+    saveBuild: (build) => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare(
+          "INSERT INTO software_builds VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+        ).run(build.id, build.projectId, JSON.stringify(build));
+        const rows = db
+          .prepare("SELECT body FROM software_builds ORDER BY rowid DESC")
+          .all()
+          .map((r) => JSON.parse(r.body));
+        const keep = retainedBuildIds(rows);
+        const remove = db.prepare("DELETE FROM software_builds WHERE id=?");
+        for (const row of rows) if (!keep.has(row.id)) remove.run(row.id);
+        db.exec("COMMIT");
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
     },
+    protectedBuildIds: () =>
+      protectedBuilds(
+        db
+          .prepare("SELECT body FROM software_builds ORDER BY rowid DESC")
+          .all()
+          .map((r) => JSON.parse(r.body)),
+      ),
     getBuild: (id) => {
       const r = db
         .prepare("SELECT body FROM software_builds WHERE id=?")

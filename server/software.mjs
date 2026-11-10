@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   parseBundle,
@@ -8,6 +8,16 @@ import {
   sourceFiles,
 } from "./project-bundle.mjs";
 import { sandboxAvailable, validateProject } from "./project-sandbox.mjs";
+import {
+  requirements,
+  requirementsHash,
+  REQUIREMENTS_VERSION,
+} from "./requirements.mjs";
+import {
+  isBuildRunning,
+  MAX_BUILD_PINS,
+  protectedBuilds,
+} from "./build-policy.mjs";
 import { retrieve, retrievalContext } from "../shared/retrieval.mjs";
 
 const fail = (message, status = 400) =>
@@ -29,28 +39,6 @@ const validationSchema = z.object({
 });
 const running = (b) =>
   ["generating", "validating", "cancelling"].includes(b.status);
-function requirements(state, id) {
-  return {
-    project: state?.projects.find((p) => p.id === id),
-    tasks:
-      state?.tasks
-        .filter((t) => t.projectId === id)
-        .map((t) => ({
-          id: t.id,
-          executionMode: t.executionMode,
-          title: t.title,
-          description: t.description,
-          deliverable: t.deliverable,
-          acceptanceCriteria: t.acceptanceCriteria,
-          dependsOn: t.dependsOn,
-          result: t.result,
-        })) || [],
-    knowledge:
-      state?.knowledge.filter((n) => !n.projectId || n.projectId === id) || [],
-  };
-}
-const hashInput = (input) =>
-  createHash("sha256").update(JSON.stringify(input)).digest("hex");
 const prompt = `你是交付完整可运行网站的全栈工程师。必须交付真实实现，不是规划文档、伪代码或只含 Markdown 的说明。
 技术栈固定：React 19 + Express 5 + Node.js 24 原生 node:sqlite。不能使用未列出的第三方库、外部 CDN、真实密钥或服务。前后端同源，所有接口以 /api 开头。数据必须在后端 SQLite 持久化，目录 process.env.DATA_DIR || './data'，使用参数绑定防止 SQL 注入。
 输出一个 JSON 对象：{"summary":"实际实现和限制","files":[{"path":"src/main.jsx","content":"完整源码"},{"path":"src/styles.css","content":"样式"},{"path":"server/app.mjs","content":"完整后端"},{"path":"README.md","content":"功能、数据结构、接口与使用步骤、限制"}],"tests":{"api":[{"name":"写入业务记录","method":"POST","path":"/api/items","body":{"title":"验收记录"},"status":201,"contains":"验收记录"},{"name":"读回业务记录","method":"GET","path":"/api/items","status":200,"contains":"验收记录"}],"browser":[{"action":"fill","selector":"input[name=title]","value":"浏览器验收记录"},{"action":"click","selector":"form button[type=submit]"},{"action":"text","value":"浏览器验收记录"}]}}。
@@ -89,13 +77,22 @@ export function softwareDelivery({
     }
     return capCache;
   }
-  function details(b) {
+  function details(b, context) {
     if (!b) return null;
-    const { files, screenshot, ...meta } = b;
-    const current = requirements(database.read().state, b.projectId);
+    const { files, screenshot, restoredScreenshot, ...meta } = b;
+    const current = requirements(
+      context?.state || database.read().state,
+      b.projectId,
+    );
     return {
       ...meta,
-      stale: hashInput(current) !== b.requirementsHash,
+      stale:
+        requirementsHash(current, b.requirementsVersion || 1) !==
+        b.requirementsHash,
+      legacyRequirements: !b.requirementsVersion || b.requirementsVersion === 1,
+      protected: (context?.protectedIds || database.protectedBuildIds()).has(
+        b.id,
+      ),
       files: (files || []).map((f) => ({
         path: f.path,
         bytes: Buffer.byteLength(f.content),
@@ -287,7 +284,15 @@ export function softwareDelivery({
     guardWrite(next) {
       if (
         active &&
-        hashInput(requirements(next, active.build.projectId)) !==
+        next.projects.find((p) => p.id === active.build.projectId)?.status !==
+          database
+            .read()
+            .state.projects.find((p) => p.id === active.build.projectId)?.status
+      )
+        throw fail("工程正在执行，请先停止并等待完成再变更项目状态", 423);
+      if (
+        active &&
+        requirementsHash(requirements(next, active.build.projectId)) !==
           active.inputHash
       )
         throw fail(
@@ -333,7 +338,8 @@ export function softwareDelivery({
         title: input.project.title,
         baseBuildId: base?.id || null,
         baseSourceHash: base?.sourceHash || null,
-        requirementsHash: hashInput(input),
+        requirementsHash: requirementsHash(input),
+        requirementsVersion: REQUIREMENTS_VERSION,
         sourceHash: "",
         status: "generating",
         summary: "",
@@ -367,6 +373,7 @@ export function softwareDelivery({
         baseBuildId: original.id,
         baseSourceHash: original.sourceHash,
         requirementsHash: original.requirementsHash,
+        requirementsVersion: original.requirementsVersion || 1,
         sourceHash: "",
         status: "validating",
         summary: original.summary,
@@ -380,7 +387,7 @@ export function softwareDelivery({
         startedAt: new Date().toISOString(),
       };
       const control = new AbortController();
-      return launch(build, control, hashInput(input), async () => {
+      return launch(build, control, requirementsHash(input), async () => {
         // Refresh trusted platform files, retain actual application sources and declared tests.
         const tests = original.files.find(
           (f) => f.path === "tests/acceptance.json",
@@ -406,10 +413,17 @@ export function softwareDelivery({
         }
       });
     },
-    list: (projectId) => ({
-      builds: (database?.listBuilds(projectId) || []).map(details),
-      activeProjectId: active?.build.projectId || null,
-    }),
+    list: (projectId) => {
+      const rows = database?.listBuilds(projectId) || [];
+      const context = {
+        state: database?.read().state,
+        protectedIds: protectedBuilds(rows),
+      };
+      return {
+        builds: rows.map((b) => details(b, context)),
+        activeProjectId: active?.build.projectId || null,
+      };
+    },
     detail: (id) => details(get(id)),
     file(id, name) {
       const f = get(id).files?.find((f) => f.path === name);
@@ -417,6 +431,21 @@ export function softwareDelivery({
       return f;
     },
     screenshot: (id) => get(id).screenshot,
+    pin(id, raw) {
+      const { pinned } = z.object({ pinned: z.boolean() }).parse(raw);
+      const build = get(id);
+      if (isBuildRunning(build)) throw fail("请等待工程结束后再锁定版本", 409);
+      if (pinned && !build.files?.length)
+        throw fail("没有源码的记录不需要锁定");
+      if (
+        pinned &&
+        !build.pinned &&
+        database.listBuilds().filter((b) => b.pinned).length >= MAX_BUILD_PINS
+      )
+        throw fail(`最多锁定 ${MAX_BUILD_PINS} 个版本，请先解除其他锁定`);
+      database.saveBuild({ ...build, pinned });
+      return details(database.getBuild(id));
+    },
     cancel(id) {
       if (active?.build.id !== id) return { cancelled: false };
       active.build.status = "cancelling";
@@ -439,6 +468,7 @@ export function softwareDelivery({
         baseBuildId: b.baseBuildId || null,
         baseSourceHash: b.baseSourceHash || null,
         requirementsHash: b.requirementsHash,
+        requirementsVersion: b.requirementsVersion || 1,
         sourceHash: b.sourceHash,
         summary: b.summary,
         validation: b.validation,

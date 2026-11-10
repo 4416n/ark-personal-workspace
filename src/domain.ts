@@ -15,7 +15,7 @@ const day = z
   );
 const stamp = z.string().datetime();
 export const prioritySchema = z.enum(["high", "medium", "low"]);
-const passageSchema = z.object({
+export const passageSchema = z.object({
   noteId: id.optional(),
   title: z.string().max(200),
   projectId: id.optional(),

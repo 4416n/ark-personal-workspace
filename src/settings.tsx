@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import {
   Check,
   Download,
@@ -20,6 +20,10 @@ import { Modal, PageHeading } from "./components";
 import { dateIn, stateSchema, type AiConfig, type Workspace } from "./domain";
 import { api, download } from "./store";
 import { MobileConnection, BackupPanel } from "./connectivity";
+
+const FullBackupPanel = lazy(() =>
+  import("./backup-ui").then((m) => ({ default: m.FullBackupPanel })),
+);
 
 const providers = [
   {
@@ -107,6 +111,9 @@ export function SettingsPage() {
         <div className="settings-main">
           <MobileConnection />
           <BackupPanel />
+          <Suspense fallback={<p className="field-hint">正在加载完整备份…</p>}>
+            <FullBackupPanel />
+          </Suspense>
           <section className="panel settings-section">
             <div className="settings-title">
               <span className="settings-icon purple">
@@ -383,6 +390,10 @@ export function SettingsPage() {
                 <strong>{state.knowledge.length}</strong>笔记
               </span>
             </div>
+            <p className="field-hint">
+              此 JSON
+              仅包含项目、任务、笔记等业务数据；迁移源码与执行历史请使用上方「完整迁移备份」。
+            </p>
             <div className="data-actions">
               <button
                 className="button"
@@ -391,11 +402,13 @@ export function SettingsPage() {
                     `方舟工作台备份-${dateIn()}.json`,
                     JSON.stringify(state, null, 2),
                   );
-                  notify("备份已导出，不包含 API Key");
+                  notify(
+                    "业务数据已导出；不含工程源码、执行日志和模型配置密钥",
+                  );
                 }}
               >
                 <Download size={16} />
-                导出全部数据
+                导出业务数据（JSON）
               </button>
               <button className="button" onClick={() => file.current?.click()}>
                 <Upload size={16} />
@@ -403,6 +416,7 @@ export function SettingsPage() {
               </button>
               <input
                 type="file"
+                aria-label="业务 JSON 文件"
                 accept=".json,application/json"
                 hidden
                 ref={file}

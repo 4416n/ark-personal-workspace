@@ -427,7 +427,7 @@ export default function App() {
             </span>
             <span>
               你来决策，团队来协作。
-              <span className="footer-brand">BOSS WORKSPACE 3.2.1</span>
+              <span className="footer-brand">BOSS WORKSPACE 3.3.0</span>
             </span>
           </footer>
         </div>

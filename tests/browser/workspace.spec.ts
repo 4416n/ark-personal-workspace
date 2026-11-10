@@ -79,7 +79,7 @@ test("员工和知识新增、搜索及安全导入导出", async ({ page }) => 
   await page.getByRole("button", { name: "关闭弹窗" }).click();
   await page.getByRole("button", { name: "工作台设置", exact: true }).click();
   const downloaded = page.waitForEvent("download");
-  await page.getByRole("button", { name: "导出全部数据" }).click();
+  await page.getByRole("button", { name: "导出业务数据（JSON）" }).click();
   const download = await downloaded;
   const backupPath = await download.path();
   expect(download.suggestedFilename()).toContain("方舟工作台备份");
