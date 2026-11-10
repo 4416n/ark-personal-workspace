@@ -139,6 +139,7 @@ export function parseBundle(content) {
     throw new Error("接口验收必须包含读取和写入行为");
   return bundle;
 }
+export const platformFiles = [...fixed, "tests/acceptance.json"];
 export async function assembleBundle(bundle) {
   const files = [...bundle.files];
   for (const name of fixed)

@@ -333,7 +333,7 @@ export function BackupPanel() {
       </div>
       <p className="field-hint">
         业务数据存入电脑数据库；保留最近 50 份快照和 30
-        天每日备份。恢复前会再次备份当前状态。
+        天每日备份。仅业务数据，不含工程源码与执行日志；整机迁移请用完整备份。恢复前会再次备份当前状态。
       </p>
       <div className="inline-controls feature-actions">
         {migrationBackup && (

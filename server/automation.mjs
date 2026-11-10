@@ -443,6 +443,12 @@ export function projectAutomation({
     return { ...job };
   }
   return {
+    reload: () => {
+      if (active.size) throw fail("请先停止执行", 409);
+      jobs.clear();
+      for (const j of database?.listAutomations() || [])
+        jobs.set(j.projectId, j);
+    },
     start,
     guardWrite,
     active: () =>

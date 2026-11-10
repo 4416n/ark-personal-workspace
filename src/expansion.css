@@ -550,3 +550,29 @@
     overflow-wrap: anywhere;
   }
 }
+
+.backup-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+.backup-counts dt {
+  color: #647489;
+  font-size: 12px;
+}
+.backup-counts dd {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.backup-checksum {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+@media (max-width: 640px) {
+  .backup-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

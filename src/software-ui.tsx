@@ -28,6 +28,9 @@ type Build = {
   error: string;
   sourceHash: string;
   stale: boolean;
+  pinned?: boolean;
+  protected?: boolean;
+  legacyRequirements?: boolean;
   hasScreenshot: boolean;
   startedAt: string;
   attempt: number;
@@ -57,6 +60,7 @@ const names: Record<string, string> = {
   failed: "未通过验证",
   cancelled: "已停止",
   interrupted: "服务中断",
+  restored: "备份恢复 · 待重验",
 };
 const running = (b?: Build) =>
   !!b && ["generating", "validating", "cancelling"].includes(b.status);
@@ -300,9 +304,9 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
         </summary>
         <p>{cap?.reason || "正在检查，不会在宿主机直接执行生成的代码。"}</p>
         <p>
-          生成 → 实际构建与测试 → 失败自动修复 → 保存版本。每个项目保留最近 5
-          版，全局最多 30 版；重要版本请下载备份，工作台 JSON
-          导出不包含工程源码。
+          生成 → 实际构建与测试 → 失败自动修复 → 保存版本。普通历史每项目最近 5
+          版、全局最近 30 版；每项目最近成功版、运行中版本和最多 20
+          个手动锁定版额外保留。完整备份包含源码，业务 JSON 不包含。
         </p>
       </details>
       {!!candidates.length && (
@@ -467,6 +471,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                     {new Date(b.startedAt).toLocaleString("zh-CN")} ·{" "}
                     {names[b.status]}
                     {b.mode === "validate" ? " · 仅重验" : ""}
+                    {b.pinned ? " · 已锁定" : b.protected ? " · 自动保留" : ""}
                   </option>
                 ))}
               </select>
@@ -477,6 +482,49 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
               KB
             </small>
           </div>
+          {!!build.files.length && (
+            <div className="inline-controls feature-actions">
+              <button
+                className="button"
+                disabled={busy || running(build)}
+                onClick={async () => {
+                  if (
+                    build.pinned &&
+                    !window.confirm(
+                      "解除锁定后，非最近成功版可能在后续清理中移除。建议先下载完整备份。继续？",
+                    )
+                  )
+                    return;
+                  setBusy(true);
+                  setError("");
+                  try {
+                    await api(`/software-builds/${build.id}/pin`, {
+                      pinned: !build.pinned,
+                    });
+                    await load();
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {build.pinned ? "解除版本锁定" : "锁定重要版本"}
+              </button>
+              <small>
+                {build.pinned
+                  ? "已锁定，不随普通历史清理"
+                  : build.protected
+                    ? "自动保留：最近成功版或运行中版本"
+                    : "普通历史版本"}
+              </small>
+            </div>
+          )}
+          {build.legacyRequirements && (
+            <p className="software-note">
+              此历史版本使用旧版严格指纹，非需求字段也可能触发过期；不会在没有原始需求证据时自动重置指纹。新生成版本使用精准需求指纹。
+            </p>
+          )}
           {build.baseBuildId && (
             <p className="software-lineage">
               {build.mode === "validate"

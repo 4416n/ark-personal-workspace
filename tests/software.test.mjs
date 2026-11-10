@@ -563,3 +563,89 @@ test("full requirement tails are supplied and changes after 5000 characters inva
   assert.equal((await f.start()).status, 400);
   assert.equal(f.calls.length, 1);
 });
+
+test("semantic requirement fingerprints ignore presentation/order but detect real changes, including after restart", async (t) => {
+  const f = await fixture(t);
+  const initial = await f.settled((await f.start()).body.id);
+  assert.equal(initial.stale, false);
+  let snap = (await f.req("/workspace")).body;
+  snap.state.projects[0].color = "pink";
+  snap.state.projects[0].retrospective = {
+    outcome: "复盘记录",
+    lessons: "经验",
+    nextSteps: "下一步",
+    updatedAt: new Date().toISOString(),
+  };
+  snap.state.tasks.reverse();
+  await f.req("/workspace", snap, "PUT");
+  assert.equal(
+    (await f.req(`/software-builds/${initial.id}`)).body.stale,
+    false,
+  );
+  await f.reboot();
+  assert.equal(
+    (await f.req(`/software-builds/${initial.id}`)).body.stale,
+    false,
+  );
+  snap = (await f.req("/workspace")).body;
+  snap.state.projects[0].successCriteria += " 必须支持导出";
+  await f.req("/workspace", snap, "PUT");
+  assert.equal(
+    (await f.req(`/software-builds/${initial.id}`)).body.stale,
+    true,
+  );
+  assert.equal(initial.requirementsVersion, 2);
+});
+
+test("latest verified and pinned versions survive failures; pin limits and unlocking are explicit", async (t) => {
+  const f = await fixture(t);
+  const stable = await f.settled((await f.start()).body.id);
+  assert.equal(stable.protected, true);
+  f.respond(() => "invalid bundle");
+  for (let i = 0; i < 6; i++)
+    await f.settled((await f.start({ maxRepairs: 0 })).body.id);
+  const retained = await f.req(`/software-builds/${stable.id}`);
+  assert.equal(retained.status, 200);
+  assert.equal(retained.body.protected, true);
+  assert.equal(
+    (await f.req(`/software-builds/${stable.id}/pin`, { pinned: true })).body
+      .pinned,
+    true,
+  );
+  f.respond(() => JSON.stringify(fullstackFixture()));
+  const newer = await f.settled((await f.start()).body.id);
+  assert.equal(newer.protected, true);
+  assert.equal(
+    (await f.req(`/software-builds/${stable.id}`)).body.pinned,
+    true,
+  );
+  assert.equal(
+    (await f.req(`/software-builds/${stable.id}/pin`, { pinned: false }))
+      .status,
+    200,
+  );
+  assert.equal((await f.req(`/software-builds/${stable.id}`)).status, 404);
+});
+
+test("pin quota is enforced without deleting protected records", async (t) => {
+  const f = await fixture(t);
+  const stable = await f.settled((await f.start()).body.id);
+  const db = openDatabase(f.dir),
+    original = db.getBuild(stable.id);
+  const { randomUUID } = await import("node:crypto");
+  for (let i = 0; i < 20; i++)
+    db.saveBuild({ ...original, id: randomUUID(), pinned: true });
+  const candidate = randomUUID();
+  db.saveBuild({ ...original, id: candidate });
+  db.close();
+  const rejected = await f.req(`/software-builds/${candidate}/pin`, {
+    pinned: true,
+  });
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error, /最多锁定/);
+  assert.equal(
+    (await f.req(`/software/${f.id}`)).body.builds.filter((b) => b.pinned)
+      .length,
+    20,
+  );
+});

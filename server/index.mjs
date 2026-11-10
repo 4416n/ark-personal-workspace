@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { localPlan, parsePlan } from "./planner.mjs";
+import { backupApi } from "./backup-api.mjs";
 import { openDatabase } from "./database.mjs";
 import { accessControl, lanAddresses } from "./access.mjs";
 import { executionLog } from "./runs.mjs";
@@ -95,6 +96,7 @@ export function createApp({
   let closePromise;
   app.locals.close = () => {
     if (closePromise) return closePromise;
+    backups.close();
     const stopped = software.close();
     automation.close();
     runs.close();
@@ -105,6 +107,16 @@ export function createApp({
   app.use("/api", access.guard);
   app.use(express.json({ limit: "10mb" }));
   access.install(app);
+  const backups = backupApi(app, {
+    database,
+    access,
+    dataDir,
+    idle: () =>
+      !software.active() &&
+      !automation.active().length &&
+      !runs.list().some((r) => r.status === "running"),
+    afterRestore: () => automation.reload(),
+  });
   app.get("/api/workspace", (req, res) => {
     const current = database?.read() || { state: null, revision: 0 };
     res.json(
@@ -233,6 +245,9 @@ export function createApp({
     asyncRoute(async (req, res) =>
       res.json(await software.start(req.params.projectId, req.body)),
     ),
+  );
+  app.post("/api/software-builds/:id/pin", (req, res) =>
+    res.json(software.pin(req.params.id, req.body)),
   );
   app.get("/api/software-builds/:id", (req, res) =>
     res.json(software.detail(req.params.id)),
