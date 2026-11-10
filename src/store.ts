@@ -37,7 +37,7 @@ export async function api<T>(
               ...(runId ? { "X-Run-Id": runId } : {}),
             },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(100000),
+      signal: AbortSignal.timeout(path === "/execute" ? 380000 : 100000),
     });
     const data = await response.json().catch(() => ({
       error: "服务返回了无效响应，请检查本地服务是否正在运行。",
@@ -57,6 +57,20 @@ export function download(
   type = "application/json",
 ) {
   const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export function downloadBytes(
+  name: string,
+  bytes: Uint8Array,
+  type = "application/octet-stream",
+) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const url = URL.createObjectURL(new Blob([copy.buffer], { type }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;

@@ -8,6 +8,7 @@ import {
   type Workspace,
 } from "./domain";
 import { boundWorkspaceHistory } from "./delivery";
+import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 import { mergeWorkspace } from "../shared/merge.mjs";
 
 const KEY = "ark-workspace-v1";
@@ -306,7 +307,9 @@ export function useSyncedWorkspace() {
         ].slice(0, 100),
       };
     }
-    adopt(next);
+    // Never mutate a remote snapshot merely by viewing it. Shared snapshots
+    // are canonicalized on server save; standalone mode does so on local edits.
+    adopt(sessionRef.current?.shared ? next : syncDeliveredKnowledge(next));
     if (sessionRef.current?.shared) {
       dirty.current = true;
       cachePending();

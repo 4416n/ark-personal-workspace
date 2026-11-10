@@ -17,7 +17,10 @@ export function KnowledgeRetrieval() {
         <FileSearch size={21} />
         <div>
           <h2>先找资料，再交给 AI</h2>
-          <p>在本地按关键词相关度提取片段，无需额外模型费用。</p>
+          <p>
+            按关键词与预设近义词在本地检索，不额外调用模型；执行 AI
+            任务时，命中片段会发送给已配置的模型。
+          </p>
         </div>
       </header>
       <form

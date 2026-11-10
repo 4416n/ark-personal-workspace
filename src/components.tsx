@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useApp } from "./context";
 import { transitionError } from "../shared/task-policy.mjs";
+import { resultPreview } from "../shared/deliverables.mjs";
 import {
   dateLabel,
   projectProgress,
@@ -321,6 +322,11 @@ export function TaskRow({ task }: { task: Task }) {
         onClick={() => open({ type: "task", id: task.id })}
       >
         <strong>{task.title}</strong>
+        {task.result.trim() && (
+          <em className="result-preview">
+            {resultPreview(task.result, 72) || "已写好交付正文"}
+          </em>
+        )}
         <span>
           {project?.title}
           {task.status === "review" && <b className="review-inline">待验收</b>}

@@ -181,6 +181,7 @@ test("所有任务状态入口都阻止未完成依赖，完成后才能生成�
   await page
     .getByRole("button", { name: "查看搭建知识库目录与索引", exact: true })
     .click();
+  page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "生成交付物", exact: true }).click();
   await expect(page.getByRole("heading", { name: "新交付物" })).toBeVisible();
   expect(calls).toHaveLength(1);

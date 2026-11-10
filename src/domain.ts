@@ -138,6 +138,7 @@ export const knowledgeSchema = z.object({
   category: z.enum(["资料", "灵感", "规范", "复盘"]),
   updatedAt: stamp,
   projectId: id.optional(),
+  sourceTaskId: id.optional(),
 });
 export const templateSchema = z
   .object({

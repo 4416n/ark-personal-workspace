@@ -124,6 +124,7 @@ type Job = {
   mode: "auto" | "manual";
   taskIds: string[];
   events: { at: string; text: string }[];
+  progress?: { part: number; parts: number; phase?: string } | null;
 };
 type Report = {
   job: Job | null;
@@ -192,7 +193,7 @@ export function AutomationPanel({ projectId }: { projectId: string }) {
       const latest = await load();
       if (
         !confirm(
-          `确认${resume ? "恢复" : "启动"}「${latest.project?.title}」的自动执行？\n\n${mode === "auto" ? "AI 审查通过后自动标记任务完成，并继续后续任务。" : "AI 审查后等待你人工验收，再恢复后续任务。"}\n本批总调用上限 ${maxCalls} 次（已用 ${resume ? latest.job?.usedCalls || 0 : 0} 次），每项最多返工 ${maxReworks} 次。生成、审查、失败尝试均计入。将使用已配置模型并消耗实际额度；关闭页面仍会继续，电脑服务必须保持运行。`,
+          `确认${resume ? "恢复" : "启动"}「${latest.project?.title}」的自动执行？\n\n${mode === "auto" ? "AI 审查通过后自动标记任务完成，并继续后续任务。" : "AI 审查后等待你人工验收，再恢复后续任务。"}\n本批总调用上限 ${maxCalls} 次（已用 ${resume ? latest.job?.usedCalls || 0 : 0} 次），每项最多返工 ${maxReworks} 次。生成、续写、审查、失败尝试均计入。将使用已配置模型并消耗实际额度；关闭页面仍会继续，电脑服务必须保持运行。`,
         )
       )
         return;
@@ -376,6 +377,13 @@ export function AutomationPanel({ projectId }: { projectId: string }) {
             调用尝试 {job.usedCalls}/{job.maxCalls} · 完成{" "}
             {tasks.filter((t) => t.status === "done").length}/{tasks.length}
           </span>
+          {active && job.progress && (
+            <small>
+              {job.progress.phase === "review"
+                ? "正在独立审查"
+                : `正在撰写第 ${job.progress.part} 段，最多 ${job.progress.parts} 次调用；不代表完成百分比。`}
+            </small>
+          )}
           {active && (
             <small>
               关闭页面仍会继续。需要编辑项目时，请先暂停并等待停止；取消仍可能产生服务商已处理部分的费用。
@@ -478,6 +486,7 @@ export function AutomationStrip() {
       status: string;
       kind?: string;
       id?: string;
+      progress?: { part: number; parts: number } | null;
     }[]
   >([]);
   useEffect(() => {

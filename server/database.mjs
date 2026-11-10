@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { stateSchema } from "../src/domain.ts";
+import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 
 export function openDatabase(directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -43,7 +44,9 @@ export function openDatabase(directory) {
     return id;
   };
   const save = (state, expected, label = "自动保存前快照") => {
-    const parsed = stateSchema.parse(state);
+    const parsed = stateSchema.parse(
+      syncDeliveredKnowledge(stateSchema.parse(state)),
+    );
     db.exec("BEGIN IMMEDIATE");
     try {
       const current = read();

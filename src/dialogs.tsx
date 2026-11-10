@@ -38,7 +38,7 @@ import {
   type Task,
   type Project,
 } from "./domain";
-import { api, download } from "./store";
+import { api, download, downloadBytes } from "./store";
 import {
   prepareTaskDraft,
   replaceResult,
@@ -49,13 +49,19 @@ import {
 import { DeliveryHistory, ProjectRetrospective } from "./delivery-ui";
 import { emptyRetro, type RetroNotes } from "./retrospective";
 import { projectToTemplate } from "./templates";
-import { CancelGeneration, Sources } from "./runs-ui";
+import { CancelGeneration, GenerationProgress, Sources } from "./runs-ui";
 import {
   AutomationPanel,
   ContractFields,
   AiReviewSummary,
 } from "./automation-ui";
 import { deliveryMarkdown } from "../shared/contract.mjs";
+import {
+  deliverableFiles,
+  resultPreview,
+  safeFileName,
+  zipStore,
+} from "../shared/deliverables.mjs";
 import type { Passage } from "../shared/retrieval.mjs";
 import { DepartmentDetail } from "./organization";
 import { AllocationReview } from "./planning";
@@ -125,6 +131,52 @@ export function Dialogs({
 }
 import { FileCode2 } from "lucide-react";
 import { SoftwarePanel, softwareConfirmation } from "./software-ui";
+
+type ProjectTaskView =
+  "software" | "auto" | "list" | "route" | "retro" | "catalog";
+
+function DeliverableIndex({
+  tasks,
+  members,
+  onOpen,
+}: {
+  tasks: Task[];
+  members: Member[];
+  onOpen: (id: string) => void;
+}) {
+  const ready = tasks.filter((task) => task.result.trim());
+  if (!ready.length)
+    return (
+      <Empty
+        title="还没有成果正文"
+        description="任务写完交付后，全文会按条目列在这里，也可以从底部打包导出。"
+      />
+    );
+  return (
+    <div className="deliverable-index">
+      {ready.map((task) => (
+        <button
+          key={task.id}
+          className="deliverable-item"
+          onClick={() => onOpen(task.id)}
+        >
+          <FileText size={16} />
+          <span>
+            <strong>{task.title}</strong>
+            <small>
+              {members.find((member) => member.id === task.ownerId)?.name ||
+                "未分配"}
+              {" · "}
+              {task.status === "done" ? "已完成" : "未验收草稿"}
+              {" · "}
+              {resultPreview(task.result, 140) || "已写好交付正文"}
+            </small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function NewProject({
   close,
@@ -272,7 +324,7 @@ function NewProject({
       !confirm(
         deliveryType === "software"
           ? softwareConfirmation(title, 1)
-          : "创建后立即自动执行这份计划？\n\n将使用你配置的模型，按依赖生成成果、独立审查；通过则自动完成任务并继续。每项最多返工 1 次，本批总调用上限 30 次。生成、审查及失败尝试均计入，可能产生费用。\n\n需要真实外部操作的任务会停下，不会发布或运行代码。关闭页面仍会继续，服务停止则暂停。可在项目中随时暂停。",
+          : "创建后立即自动执行这份计划？\n\n将使用你配置的模型，按依赖生成成果、独立审查；通过则自动完成任务并继续。每项最多返工 1 次，本批总调用上限 30 次。生成、续写、审查及失败尝试均计入，可能产生费用。\n\n需要真实外部操作的任务会停下，不会发布或运行代码。关闭页面仍会继续，服务停止则暂停。可在项目中随时暂停。",
       )
     )
       return;
@@ -643,7 +695,7 @@ function ProjectDetail({
     p?.successCriteria || "",
   );
   const [budget, setBudget] = useState(p?.budget || 0);
-  const [taskView, setTaskView] = useState(
+  const [taskView, setTaskView] = useState<ProjectTaskView>(
     section || (p?.deliveryType === "software" ? "software" : "list"),
   );
   const [retroNotes, setRetroNotes] = useState<RetroNotes>(() => ({
@@ -657,7 +709,7 @@ function ProjectDetail({
   );
   const canLeaveProject = () =>
     !retroDirty || window.confirm("复盘有未保存的笔记，确定放弃并离开？");
-  const selectTaskView = (view: string) => {
+  const selectTaskView = (view: ProjectTaskView) => {
     if (taskView === "retro" && view !== "retro" && retroDirty) {
       if (!window.confirm("复盘笔记尚未保存，放弃修改并切换视图？")) return;
       setRetroNotes({
@@ -670,6 +722,23 @@ function ProjectDetail({
   };
   const tasks = state.tasks.filter((t) => t.projectId === id);
   const progress = projectProgress(p, tasks);
+  const readyToClose =
+    p.deliveryType !== "software" &&
+    tasks.length > 0 &&
+    tasks.every((task) => task.status === "done") &&
+    p.status !== "done";
+  const exportDocument = () =>
+    download(
+      `${safeFileName(p.title)}.md`,
+      deliveryMarkdown(p, tasks),
+      "text/markdown",
+    );
+  const exportZip = () =>
+    downloadBytes(
+      `${safeFileName(p.title)}-任务文档.zip`,
+      zipStore(deliverableFiles(p, tasks, state.members)),
+      "application/zip",
+    );
   const changeStatus = (status: Project["status"]) => {
     if (
       status === "done" &&
@@ -844,6 +913,37 @@ function ProjectDetail({
             <span className={p.color} style={{ width: `${progress}%` }} />
           </div>
         </div>
+        {readyToClose && (
+          <div className="closeout-banner" role="status">
+            <div>
+              <strong>全部任务已完成</strong>
+              <p>
+                请核对实际成果、验收记录与整体目标，再标记项目完成。文档 ZIP
+                不含可运行工程。
+              </p>
+            </div>
+            <div className="closeout-actions">
+              <button
+                className="button"
+                onClick={() => selectTaskView("retro")}
+              >
+                项目复盘
+              </button>
+              <button className="button" onClick={exportDocument}>
+                导出总文档
+              </button>
+              <button className="button" onClick={exportZip}>
+                导出任务文档 ZIP
+              </button>
+              <button
+                className="button primary"
+                onClick={() => changeStatus("done")}
+              >
+                标记项目完成
+              </button>
+            </div>
+          </div>
+        )}
         <div className="section-heading">
           <div className="project-task-switch" aria-label="项目任务视图">
             <button
@@ -869,6 +969,14 @@ function ProjectDetail({
             >
               <ListTodo size={14} />
               执行清单
+            </button>
+            <button
+              className={taskView === "catalog" ? "active" : ""}
+              aria-pressed={taskView === "catalog"}
+              onClick={() => selectTaskView("catalog")}
+            >
+              <FileText size={14} />
+              成果目录
             </button>
             <button
               className={taskView === "route" ? "active" : ""}
@@ -910,6 +1018,14 @@ function ProjectDetail({
           />
         ) : taskView === "route" ? (
           <ProjectRoute tasks={tasks} />
+        ) : taskView === "catalog" ? (
+          <DeliverableIndex
+            tasks={tasks}
+            members={state.members}
+            onOpen={(taskId) => {
+              if (canLeaveProject()) open({ type: "task", id: taskId });
+            }}
+          />
         ) : (
           tasks.map((t) => <TaskRow key={t.id} task={t} />)
         )}
@@ -971,18 +1087,13 @@ function ProjectDetail({
         >
           保存为流程模板
         </button>
-        <button
-          className="button"
-          onClick={() =>
-            download(
-              `${p.title}.md`,
-              deliveryMarkdown(p, tasks),
-              "text/markdown",
-            )
-          }
-        >
+        <button className="button" onClick={exportDocument}>
           <Download size={16} />
           导出任务文档
+        </button>
+        <button className="button" onClick={exportZip}>
+          <Download size={16} />
+          导出任务文档 ZIP
         </button>
       </footer>
     </Modal>
@@ -1129,9 +1240,8 @@ function TaskDetail({
       return;
     }
     if (
-      task.result &&
       !window.confirm(
-        "当前成果会留存为历史版本，新成果生成后需要重新验收。继续生成？",
+        `${task.result ? "当前成果会留存为历史版本，新成果需要重新验收。\n\n" : ""}使用已配置模型生成交付物？长文截断时自动续写，最多 4 次调用，单次输出上限 6000 tokens，可能产生费用。项目、任务和检索资料会发送给该模型；可以随时取消。`,
       )
     )
       return;
@@ -1142,6 +1252,7 @@ function TaskDetail({
         content: string;
         sources?: Passage[];
       }>("/execute", {
+        maxParts: 4,
         task: {
           id: task.id,
           title: task.title,
@@ -1482,6 +1593,7 @@ function TaskDetail({
         <footer className="modal-footer">
           <div>
             {busy && <CancelGeneration endpoint="/execute" />}
+            {busy && <GenerationProgress endpoint="/execute" />}
             {original && (
               <button
                 type="button"
@@ -1856,7 +1968,7 @@ function MemberDetail({ id, close }: { id?: string; close: () => void }) {
 }
 
 function KnowledgeDetail({ id, close }: { id?: string; close: () => void }) {
-  const { state, update, notify } = useApp();
+  const { state, update, notify, open } = useApp();
   const original = state.knowledge.find((k) => k.id === id);
   const [note, setNote] = useState<Knowledge>(
     () =>
@@ -1869,6 +1981,33 @@ function KnowledgeDetail({ id, close }: { id?: string; close: () => void }) {
       },
   );
   const [preview, setPreview] = useState(false);
+  if (original?.sourceTaskId)
+    return (
+      <Modal
+        wide
+        title="已完成任务成果"
+        subtitle="自动同步的只读副本；修改或重开来源任务后同步更新。"
+        onClose={close}
+      >
+        <div className="modal-body">
+          <h2>{original.title}</h2>
+          <div className="markdown">
+            <ReactMarkdown>{original.content}</ReactMarkdown>
+          </div>
+        </div>
+        <footer className="modal-footer">
+          <button className="button" onClick={close}>
+            关闭
+          </button>
+          <button
+            className="button primary"
+            onClick={() => open({ type: "task", id: original.sourceTaskId })}
+          >
+            查看来源任务
+          </button>
+        </footer>
+      </Modal>
+    );
   return (
     <Modal
       wide

@@ -496,3 +496,94 @@ test("系统时钟回拨时最新备份、执行记录排序及保留顺序仍�
   });
   assert.equal(db.listRuns()[0].id, "second");
 });
+
+const segment = (content, reason = "length", usage = true) => ({
+  envelope: {
+    choices: [{ finish_reason: reason, message: { content } }],
+    ...(usage
+      ? {
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+        }
+      : {}),
+  },
+});
+
+test("手动生成默认只调用一次，明确授权续写后累计所有分段用量", async (t) => {
+  const f = await fixture(t, 1);
+  const payload = {
+    task: f.state.tasks[0],
+    project: f.state.projects[0],
+    member: f.state.members[0],
+    knowledge: [],
+  };
+  f.setResponse(() => segment("首段"));
+  const single = await f.req("/execute", payload);
+  assert.notEqual(single.status, 200);
+  assert.equal(f.calls.length, 1);
+  assert.match(single.body.error, /长度限制/);
+  assert.equal(
+    (await f.req("/execute", { ...payload, maxParts: 5 })).status,
+    400,
+  );
+  assert.equal(f.calls.length, 1);
+  let count = 0;
+  f.setResponse(() =>
+    ++count === 1 ? segment("首段\n") : segment("尾段", "stop"),
+  );
+  const result = await f.req("/execute", { ...payload, maxParts: 4 });
+  assert.equal(result.body.content, "首段\n尾段");
+  const run = (await f.req(`/runs/${result.body.runId}`)).body;
+  assert.equal(run.calls, 2);
+  assert.deepEqual(run.usage, { input: 20, output: 40, total: 60 });
+  assert.equal(run.usageIncomplete, false);
+  assert.match(f.calls.at(-1).body.messages.at(-1).content, /从中断处接着写/);
+});
+
+test("自动续写计入批次调用上限，未完成草稿不落盘；缺失用量明确标记", async (t) => {
+  const f = await fixture(t, 1);
+  f.setResponse(() =>
+    segment(`分段${f.calls.length}`, "length", f.calls.length === 1),
+  );
+  await f.start({ maxCalls: 2 });
+  const report = await f.settled();
+  assert.equal(f.calls.length, 2);
+  assert.equal(report.job.usedCalls, 2);
+  assert.equal(report.job.status, "needs_attention");
+  assert.equal(report.tasks[0].result, "");
+  assert.match(report.job.note, /截断草稿未保存/);
+  const run = (await f.req("/runs")).body[0];
+  assert.equal(run.calls, 2);
+  assert.equal(run.usage.total, 30);
+  assert.equal(run.usageIncomplete, true);
+  assert.equal(run.hasOutput, false);
+});
+
+test("完成分段后才独立审查，累计批次用量且成果知识落到同一数据库快照", async (t) => {
+  const f = await fixture(t, 1);
+  let parts = 0;
+  f.setResponse((c) =>
+    c.review
+      ? null
+      : ++parts === 1
+        ? segment("正文\n")
+        : segment("使用方式与限制", "stop"),
+  );
+  await f.start({ maxCalls: 3 });
+  const report = await f.settled();
+  assert.equal(report.job.status, "completed");
+  assert.equal(report.job.usedCalls, 3);
+  assert.equal(report.tasks[0].result, "正文\n使用方式与限制");
+  const snap = (await f.req("/workspace")).body;
+  assert.ok(
+    snap.state.knowledge.some(
+      (n) =>
+        n.sourceTaskId === report.tasks[0].id &&
+        n.content === report.tasks[0].result,
+    ),
+  );
+  const runs = (await f.req("/runs")).body;
+  assert.deepEqual(
+    runs.map((r) => r.usage.total),
+    [30, 60],
+  );
+});
