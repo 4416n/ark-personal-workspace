@@ -11,6 +11,12 @@ import {
 } from "lucide-react";
 import { useApp } from "./context";
 import { api } from "./store";
+import {
+  EngineeringProgress,
+  type Pipeline,
+  type Acceptance,
+  type Resume,
+} from "./engineering-progress";
 
 type CheckResult = {
   name: string;
@@ -22,6 +28,9 @@ type Build = {
   id: string;
   title: string;
   mode?: "generate" | "validate";
+  pipeline?: Pipeline;
+  acceptance?: Acceptance;
+  resume?: Resume;
   baseBuildId?: string | null;
   baseSourceHash?: string | null;
   status: string;
@@ -86,6 +95,8 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [repairs, setRepairs] = useState(1);
   const [maxTokens, setMaxTokens] = useState(8192);
+  const [workflow, setWorkflow] = useState<"staged" | "bundle">("staged");
+  const [extraAttempts, setExtraAttempts] = useState(0);
   const [baseChoice, setBaseChoice] = useState("recommended");
   const [loaded, setLoaded] = useState(false);
   const [cap, setCap] = useState<{ available: boolean; reason: string } | null>(
@@ -135,6 +146,14 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
     };
   }, [projectId, session?.shared]);
   const build = list.builds.find((b) => b.id === selected);
+  const visibleFiles = build?.pipeline?.draftFiles.length
+    ? [
+        ...build.pipeline.draftFiles,
+        ...build.files.filter(
+          (f) => !build.pipeline!.draftFiles.some((d) => d.path === f.path),
+        ),
+      ]
+    : build?.files || [];
   const active = list.builds.find(running);
   const candidates = list.builds.filter((b) => b.files.length && !running(b));
   const generationBase =
@@ -150,13 +169,16 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
     let live = true;
     setSource("");
     setSourceError("");
-    if (build?.files.length && !build.files.some((f) => f.path === file)) {
-      setFile("src/main.jsx");
+    if (visibleFiles.length && !visibleFiles.some((f) => f.path === file)) {
+      setFile(
+        visibleFiles.find((f) => f.path === "src/main.jsx")?.path ||
+          visibleFiles[0].path,
+      );
       return () => {
         live = false;
       };
     }
-    if (build?.files.some((f) => f.path === file))
+    if (build && visibleFiles.some((f) => f.path === file))
       void api<{ content: string }>(
         `/software-builds/${build.id}/file?path=${encodeURIComponent(file)}`,
       )
@@ -169,7 +191,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
     return () => {
       live = false;
     };
-  }, [build?.id, build?.sourceHash, file]);
+  }, [build?.id, build?.sourceHash, build?.pipeline?.revision, file]);
   const start = async () => {
     if (busy) return;
     setBusy(true);
@@ -178,7 +200,12 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
       const revision = await syncNow();
       if (
         !confirm(
-          softwareConfirmation(project?.title || "项目", repairs, maxTokens) +
+          softwareConfirmation(
+            project?.title || "项目",
+            repairs,
+            maxTokens,
+            workflow === "staged",
+          ) +
             "\n\n本次生成起点：" +
             baseDescription,
         )
@@ -190,6 +217,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
         revision,
         maxRepairs: repairs,
         maxTokens,
+        workflow,
         baseBuildId: generationBase?.id || null,
       });
       select(next.id);
@@ -231,6 +259,68 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
     setError("");
     try {
       await api(`/software-builds/${active.id}/cancel`, {});
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+  const resume = async () => {
+    if (!build?.resume?.allowed || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const revision = await syncNow();
+      const info = build.resume;
+      if (
+        !confirm(
+          `从「${info.label}」继续？\n已用 ${info.calls} 次模型尝试，不会清零；本次最多还有 ${info.remainingCalls + extraAttempts} 次模型尝试（含修复预留）。本阶段追加 ${extraAttempts} 次。\n保留已完成阶段与源码，使用当前全局模型配置；余下阶段仍可能产生费用。不会自动部署或完成项目。`,
+        )
+      )
+        return;
+      await api(`/software-builds/${build.id}/resume`, {
+        confirmed: true,
+        allowSandbox: true,
+        revision,
+        checkpointRevision: info.revision,
+        extraAttempts,
+      });
+      setExtraAttempts(0);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+  const decision = async (
+    requirementId: string,
+    value: "approved" | "rejected",
+    note: string,
+  ) => {
+    if (!build || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const revision = await syncNow();
+      if (
+        !confirm(
+          value === "approved"
+            ? "确认你已检查此项的实际行为？这将记录为人工验收，不是 AI 自动通过。"
+            : "记录这条需求的退回原因？",
+        )
+      )
+        return;
+      await api(`/software-builds/${build.id}/accept`, {
+        confirmed: true,
+        revision,
+        checkpointRevision: build.pipeline!.revision,
+        sourceHash: build.sourceHash,
+        requirementId,
+        decision: value,
+        note,
+      });
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -348,6 +438,18 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
       )}
       <div className="software-controls">
         <label>
+          执行方式{" "}
+          <select
+            aria-label="工程执行方式"
+            value={workflow}
+            disabled={busy || !!list.activeProjectId}
+            onChange={(e) => setWorkflow(e.target.value as "staged" | "bundle")}
+          >
+            <option value="staged">分阶段 · 可恢复</option>
+            <option value="bundle">整包生成 · 兼容模式</option>
+          </select>
+        </label>
+        <label>
           自动修复{" "}
           <select
             aria-label="工程自动修复次数"
@@ -355,9 +457,15 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
             disabled={!!list.activeProjectId || busy}
             onChange={(e) => setRepairs(Number(e.target.value))}
           >
-            <option value={0}>不修复 · 最多 1 次调用</option>
-            <option value={1}>1 次 · 最多 2 次调用</option>
-            <option value={2}>2 次 · 最多 3 次调用</option>
+            <option value={0}>
+              不重试 · 最多 {workflow === "staged" ? 5 : 1} 次调用
+            </option>
+            <option value={1}>
+              1 次 · 最多 {workflow === "staged" ? 11 : 2} 次调用
+            </option>
+            <option value={2}>
+              2 次 · 最多 {workflow === "staged" ? 17 : 3} 次调用
+            </option>
           </select>
         </label>
         <label>
@@ -433,12 +541,47 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
           </button>
         )}
       </div>
+      {build?.resume?.allowed && (
+        <div className="software-controls engineering-resume">
+          <p>
+            从「{build.resume.label}」恢复，已完成阶段保留。
+            {build.resume.needsExtra && "本阶段次数已用完，需显式追加。"}
+          </p>
+          <label>
+            本阶段追加尝试{" "}
+            <select
+              aria-label="恢复追加次数"
+              value={extraAttempts}
+              disabled={busy || build.resume.next === "validation"}
+              onChange={(e) => setExtraAttempts(Number(e.target.value))}
+            >
+              <option value={0}>不追加</option>
+              <option value={1}>追加 1 次</option>
+              <option value={2}>追加 2 次</option>
+            </select>
+          </label>
+          <button
+            className="button primary"
+            disabled={
+              busy ||
+              !!list.activeProjectId ||
+              (build.resume.needsExtra && !extraAttempts) ||
+              (build.resume.modelRequired && !config?.configured)
+            }
+            onClick={() => void resume()}
+          >
+            从检查点继续
+          </button>
+        </div>
+      )}
       {active && (
         <p className="software-live" role="status">
           {names[active.status]} ·{" "}
           {active.mode === "validate"
             ? "只运行已有源码，0 次模型调用。关闭页面仍会继续，可随时停止。"
-            : `第 ${active.attempt || 1}/${active.maxRepairs + 1} 次模型调用。关闭页面仍会继续；停止可能仍产生已处理部分的费用。`}
+            : active.pipeline
+              ? "分阶段执行，产物通过格式检查后保存；停止仍可能产生已处理部分的费用。"
+              : `第 ${active.attempt || 1}/${active.maxRepairs + 1} 次模型调用。关闭页面仍会继续；停止可能仍产生已处理部分的费用。`}
         </p>
       )}
       {list.activeProjectId && !active && (
@@ -482,12 +625,15 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
               </select>
             </label>
             <small>
-              {build.files.length} 个文件 ·{" "}
-              {Math.ceil(build.files.reduce((n, f) => n + f.bytes, 0) / 1024)}{" "}
+              {build.files.length
+                ? `${build.files.length} 个工程文件`
+                : `${visibleFiles.length} 个阶段草稿（未集成）`}{" "}
+              ·{" "}
+              {Math.ceil(visibleFiles.reduce((n, f) => n + f.bytes, 0) / 1024)}{" "}
               KB
             </small>
           </div>
-          {!!build.files.length && (
+          {(!!visibleFiles.length || !!build.pipeline?.contract) && (
             <div className="inline-controls feature-actions">
               <button
                 className="button"
@@ -524,6 +670,21 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                     : "普通历史版本"}
               </small>
             </div>
+          )}
+          {build.pipeline && (
+            <EngineeringProgress
+              key={build.id}
+              pipeline={build.pipeline}
+              acceptance={build.acceptance}
+              canAccept={
+                !list.activeProjectId &&
+                build.status === "verified" &&
+                !build.pipeline.next &&
+                !build.stale
+              }
+              busy={busy}
+              onDecision={decision}
+            />
           )}
           {build.legacyRequirements && (
             <p className="software-note">
@@ -566,11 +727,11 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
             </details>
           )}
           {build.summary && <p className="software-note">{build.summary}</p>}
-          {!!build.files.length && (
+          {!!visibleFiles.length && (
             <div className="software-workspace">
               <nav className="software-files" aria-label="工程文件">
                 <strong>工程文件</strong>
-                {build.files.map((f) => (
+                {visibleFiles.map((f) => (
                   <button
                     key={f.path}
                     className={file === f.path ? "selected" : ""}
@@ -586,7 +747,11 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
               <div className="software-source">
                 <header>
                   <strong>{file}</strong>
-                  <small>只读源码</small>
+                  <small>
+                    {build.pipeline?.next && !build.files.length
+                      ? "阶段草稿 · 未集成验证"
+                      : "只读源码"}
+                  </small>
                 </header>
                 <pre tabIndex={0} aria-label="文件源码">
                   <code>{sourceError || source || "正在读取文件…"}</code>

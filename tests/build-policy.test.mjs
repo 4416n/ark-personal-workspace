@@ -11,6 +11,26 @@ import {
   hashInput,
 } from "../server/requirements.mjs";
 import { seedWorkspace } from "../src/domain.ts";
+test("verified source survives a failed staged AI review without inventing acceptance", () => {
+  const b = {
+    id: "review-failed",
+    projectId: "p",
+    status: "failed",
+    pipeline: {},
+    sourceHash: "abc",
+    validation: { passed: true, sourceHash: "abc" },
+    files: [{}],
+  };
+  const failures = Array.from({ length: 40 }, (_, i) => ({
+    id: "f" + i,
+    projectId: "p",
+    status: "failed",
+    files: [],
+  }));
+  assert.equal(retainedBuildIds([...failures, b]).has(b.id), true);
+  assert.equal(buildSelection([...failures, b]).baselines.get("p").id, b.id);
+  assert.equal(b.status, "failed");
+});
 test("global pruning protects old stable, pinned and active builds across projects", () => {
   const old = [
     { id: "stable", projectId: "old", status: "verified", files: [{}] },

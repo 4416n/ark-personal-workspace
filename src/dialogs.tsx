@@ -349,6 +349,7 @@ function NewProject({
             allowSandbox: true,
             revision,
             maxRepairs: 1,
+            workflow: "staged",
           });
         else
           await api(`/automation/${projectId}/start`, {

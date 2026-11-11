@@ -22,6 +22,15 @@ import {
 } from "./build-policy.mjs";
 import { retrieve, retrievalContext } from "../shared/retrieval.mjs";
 import { VERIFICATION_VERSION } from "./scaffold/scripts/persistence.mjs";
+import {
+  createPipeline,
+  pipelineSchema,
+  resumeInfo,
+  STAGE_NAMES,
+  pendingAcceptance,
+  acceptanceRequirements,
+} from "./engineering-stages.mjs";
+import { runStaged } from "./staged-runner.mjs";
 
 const fail = (message, status = 400) =>
   Object.assign(new Error(message), { status });
@@ -30,6 +39,7 @@ const startSchema = z.object({
   allowSandbox: z.literal(true),
   revision: z.number().int().min(1),
   maxRepairs: z.number().int().min(0).max(2),
+  workflow: z.enum(["bundle", "staged"]).default("bundle"),
   baseBuildId: z.string().uuid().nullable().optional(),
   maxTokens: z
     .union([z.literal(8192), z.literal(16384), z.literal(32768)])
@@ -71,7 +81,19 @@ export function softwareDelivery({
   for (const b of database?.listBuilds() || [])
     if (["generating", "validating", "cancelling"].includes(b.status)) {
       b.status = "interrupted";
-      b.error = "服务重启，工程交付已中断，已有源码保留；再次生成需要重新确认";
+      b.error = b.pipeline
+        ? "服务重启；已保存检查点，确认后可从中断阶段继续"
+        : "服务重启，工程交付已中断，已有源码保留；再次生成需要重新确认";
+      if (b.pipeline) {
+        b.pipeline.revision++;
+        for (const s of b.pipeline.stages)
+          if (s.status === "running") s.status = "failed";
+        for (const e of b.pipeline.events)
+          if (e.status === "running") {
+            e.status = "failed";
+            e.error = "服务中断，尝试计数保留";
+          }
+      }
       save(b);
     }
   let capCache = null,
@@ -85,13 +107,33 @@ export function softwareDelivery({
   }
   function details(b, context) {
     if (!b) return null;
-    const { files, screenshot, restoredScreenshot, ...meta } = b;
+    const { files, screenshot, restoredScreenshot, pipeline, ...meta } = b;
     const current = requirements(
       context?.state || database.read().state,
       b.projectId,
     );
     return {
       ...meta,
+      ...(pipeline
+        ? {
+            pipeline: {
+              version: pipeline.version,
+              revision: pipeline.revision,
+              next: pipeline.next,
+              stages: pipeline.stages.map((s) => ({
+                ...s,
+                label: STAGE_NAMES[s.id],
+              })),
+              events: pipeline.events,
+              contract: pipeline.contract,
+              draftFiles: pipeline.draft.map((f) => ({
+                path: f.path,
+                bytes: Buffer.byteLength(f.content),
+              })),
+            },
+            resume: resumeInfo(b, current),
+          }
+        : {}),
       stale:
         requirementsHash(current, b.requirementsVersion || 1) !==
         b.requirementsHash,
@@ -114,7 +156,7 @@ export function softwareDelivery({
     if (!b) throw fail("工程版本不存在或已超出保留上限", 404);
     return b;
   };
-  async function runValidation(build, control, number) {
+  async function runValidation(build, control, number, finalize = true) {
     const started = Date.now();
     const result = await validator(build.files, { signal: control.signal });
     control.signal.throwIfAborted();
@@ -136,7 +178,15 @@ export function softwareDelivery({
       logs: (result.logs || "").slice(-24000),
       durationMs: build.validation.durationMs,
     });
-    if (passed) {
+    build.attempts = build.attempts.slice(-100);
+    if (build.pipeline && build.mode === "validate") {
+      build.pipeline.stages.find((s) => s.id === "validation").status = passed
+        ? "completed"
+        : "failed";
+      build.pipeline.stages.find((s) => s.id === "review").status = "skipped";
+      build.pipeline.revision++;
+    }
+    if (passed && finalize) {
       build.status = "verified";
       build.finishedAt = new Date().toISOString();
       save(build);
@@ -159,6 +209,7 @@ export function softwareDelivery({
             ? "已停止工程交付，已有源码和检查记录保留"
             : e.message;
           build.finishedAt = new Date().toISOString();
+          if (build.pipeline) build.pipeline.revision++;
           save(build);
         }
       })
@@ -361,6 +412,19 @@ export function softwareDelivery({
         validation: null,
         startedAt: new Date().toISOString(),
       };
+      if (options.workflow === "staged") {
+        build.pipeline = createPipeline(
+          input,
+          retrieve(
+            input.knowledge,
+            `${input.project.title} ${input.project.goal}`,
+            projectId,
+          ),
+          options.maxRepairs,
+          base,
+        );
+        build.acceptance = pendingAcceptance(build);
+      }
       build.sourceOrigin = {
         id: build.id,
         sequence: nextSourceSequence(database.listBuilds()),
@@ -368,8 +432,119 @@ export function softwareDelivery({
       };
       const control = new AbortController();
       return launch(build, control, build.requirementsHash, () =>
-        processBuild(build, input, config, control, base),
+        build.pipeline
+          ? runStaged({
+              build,
+              input,
+              config,
+              control,
+              save,
+              runs,
+              completion,
+              prompt,
+              validate: runValidation,
+            })
+          : processBuild(build, input, config, control, base),
       );
+    },
+    async resume(id, raw) {
+      const options = validationSchema
+        .extend({
+          checkpointRevision: z.number().int().min(0),
+          extraAttempts: z.number().int().min(0).max(2).default(0),
+        })
+        .parse(raw);
+      const config = await readConfig();
+      const snapshot = assertStart(options.revision);
+      const build = get(id);
+      const input = requirements(snapshot.state, build.projectId);
+      const info = resumeInfo(build, input);
+      if (!info?.allowed)
+        throw fail(info?.reason || "此版本没有可恢复的阶段", 409);
+      if (info.revision !== options.checkpointRevision)
+        throw fail("检查点已经变化，请刷新后重新确认", 409);
+      build.pipeline = pipelineSchema.parse(build.pipeline);
+      const p = build.pipeline,
+        stage = p.stages.find((s) => s.id === p.next);
+      if (
+        JSON.stringify(p.requirements) !==
+        JSON.stringify(acceptanceRequirements(input))
+      )
+        throw fail("检查点需求清单与当前原始要求不一致，拒绝遗漏需求", 409);
+      if (p.next === "validation" && options.extraAttempts)
+        throw fail("验证不调用模型，无需追加尝试");
+      if (stage.allowance + options.extraAttempts > 100)
+        throw fail("单阶段累计尝试不能超过100次，请检查问题后创建新版本");
+      if (info.needsExtra && !options.extraAttempts)
+        throw fail("本阶段次数已用完，请显式追加尝试后恢复");
+      if (info.modelRequired && !config.apiKey)
+        throw fail("剩余阶段需要模型，请先配置 AI");
+      stage.allowance += options.extraAttempts;
+      p.revision++;
+      build.status = p.next === "validation" ? "validating" : "generating";
+      build.error = "";
+      delete build.finishedAt;
+      const control = new AbortController();
+      return launch(build, control, build.requirementsHash, () =>
+        runStaged({
+          build,
+          input,
+          config,
+          control,
+          save,
+          runs,
+          completion,
+          prompt,
+          validate: runValidation,
+        }),
+      );
+    },
+    accept(id, raw) {
+      const options = z
+        .object({
+          confirmed: z.literal(true),
+          revision: z.number().int().min(1),
+          checkpointRevision: z.number().int().min(0),
+          sourceHash: z.string().length(64),
+          requirementId: z.string().max(150),
+          decision: z.enum(["approved", "rejected"]),
+          note: z.string().trim().min(1).max(2000),
+        })
+        .parse(raw);
+      const snapshot = assertStart(options.revision);
+      const b = get(id);
+      const currentRequirements = requirements(snapshot.state, b.projectId);
+      if (
+        !b.pipeline ||
+        b.pipeline.next ||
+        !b.acceptance ||
+        b.status !== "verified" ||
+        !b.validation?.passed ||
+        b.sourceHash !== options.sourceHash ||
+        b.acceptance.sourceHash !== b.sourceHash ||
+        b.pipeline.revision !== options.checkpointRevision ||
+        JSON.stringify(b.pipeline.requirements) !==
+          JSON.stringify(acceptanceRequirements(currentRequirements)) ||
+        requirementsHash(currentRequirements, b.requirementsVersion) !==
+          b.requirementsHash
+      )
+        throw fail("工程未通过验证、需求已变更或验收版本过期，请刷新检查", 409);
+      const item = b.acceptance.items.find(
+        (r) => r.id === options.requirementId,
+      );
+      if (!item) throw fail("验收条目不存在", 404);
+      item.decision = {
+        actor: "human",
+        value: options.decision,
+        note: options.note,
+        at: new Date().toISOString(),
+      };
+      b.acceptance.complete = b.acceptance.items.every(
+        (r) => r.decision?.value === "approved",
+      );
+      b.pipeline.revision++;
+      save(b);
+      return details(b);
     },
     async revalidate(id, raw) {
       const options = validationSchema.parse(raw);
@@ -404,6 +579,17 @@ export function softwareDelivery({
         validation: null,
         startedAt: new Date().toISOString(),
       };
+      // Revalidation preserves the requirement list, never prior approval or AI evidence.
+      if (original.pipeline) {
+        build.pipeline = pipelineSchema.parse(
+          structuredClone(original.pipeline),
+        );
+        build.pipeline.next = null;
+        for (const s of build.pipeline.stages)
+          if (["validation", "review"].includes(s.id)) s.status = "pending";
+        build.pipeline.revision++;
+        build.acceptance = pendingAcceptance(build);
+      }
       const control = new AbortController();
       return launch(build, control, requirementsHash(input), async () => {
         // Refresh trusted platform files, retain actual application sources and declared tests.
@@ -419,6 +605,7 @@ export function softwareDelivery({
         );
         build.files = await assembleBundle(bundle);
         build.sourceHash = sourceHash(build.files);
+        if (build.pipeline) build.acceptance = pendingAcceptance(build);
         save(build);
         const result = await runValidation(build, control, 1);
         if (!result.passed) {
@@ -448,7 +635,10 @@ export function softwareDelivery({
     },
     detail: (id) => details(get(id)),
     file(id, name) {
-      const f = get(id).files?.find((f) => f.path === name);
+      const b = get(id);
+      const f =
+        (b.pipeline?.draft || b.files)?.find((f) => f.path === name) ||
+        b.files?.find((f) => f.path === name);
       if (!f) throw fail("文件不存在", 404);
       return f;
     },
@@ -457,7 +647,12 @@ export function softwareDelivery({
       const { pinned } = z.object({ pinned: z.boolean() }).parse(raw);
       const build = get(id);
       if (isBuildRunning(build)) throw fail("请等待工程结束后再锁定版本", 409);
-      if (pinned && !build.files?.length)
+      if (
+        pinned &&
+        !build.files?.length &&
+        !build.pipeline?.draft.length &&
+        !build.pipeline?.contract
+      )
         throw fail("没有源码的记录不需要锁定");
       if (
         pinned &&
@@ -494,6 +689,8 @@ export function softwareDelivery({
         sourceHash: b.sourceHash,
         summary: b.summary,
         validation: b.validation,
+        acceptance: b.acceptance || null,
+        stages: b.pipeline?.stages || null,
         stale: details(b).stale,
         notice:
           "仅指定技术栈、声明测试与冒烟检查；部署文件已附带，但未构建Docker镜像、未上线，不保证所有业务/安全要求。",
@@ -510,6 +707,16 @@ export function softwareDelivery({
       if (active) {
         active.build.status = "interrupted";
         active.build.error = "服务已停止，等待再次确认";
+        if (active.build.pipeline) {
+          active.build.pipeline.revision++;
+          for (const s of active.build.pipeline.stages)
+            if (s.status === "running") s.status = "failed";
+          for (const e of active.build.pipeline.events)
+            if (e.status === "running") {
+              e.status = "failed";
+              e.error = "服务中断，尝试计数保留";
+            }
+        }
         save(active.build);
         active.control.abort();
       }

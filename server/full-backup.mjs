@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { MAX_BUILD_PINS } from "./build-policy.mjs";
+import { pipelineSchema, pendingAcceptance } from "./engineering-stages.mjs";
 import { stateSchema, passageSchema } from "../src/domain.ts";
 import {
   parseBundle,
@@ -118,6 +119,7 @@ const build = z
     restoredScreenshot: z.string().max(5000000).nullable().optional(),
     restoredStatus: z.string().max(50).optional(),
     pinned: z.boolean().optional(),
+    pipeline: pipelineSchema.optional(),
     attempts: z
       .array(
         z
@@ -255,6 +257,23 @@ export async function decodeFullBackup(bytes) {
     b.restoredScreenshot = b.restoredScreenshot || b.screenshot || null;
     b.validation = null;
     b.screenshot = null;
+    if (b.pipeline) {
+      const p = b.pipeline;
+      p.revision++;
+      for (const s of p.stages) if (s.status === "running") s.status = "failed";
+      for (const e of p.events)
+        if (e.status === "running") {
+          e.status = "failed";
+          e.error = "从备份恢复的中断尝试，计数保留";
+        }
+      if (b.files.length) {
+        p.draft = sourceFiles(b.files);
+        p.next = b.mode === "validate" ? null : "validation";
+        for (const s of p.stages)
+          if (["validation", "review"].includes(s.id)) s.status = "pending";
+      }
+      b.acceptance = pendingAcceptance(b);
+    } else delete b.acceptance;
     b.error = "从备份恢复；历史报告不能替代本机重验，未执行源码或调用模型";
   }
   return {

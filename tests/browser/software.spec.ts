@@ -6,6 +6,7 @@ import http, { type Server } from "node:http";
 import { createApp } from "../../server/index.mjs";
 import { seedWorkspace } from "../../src/domain";
 import { fullstackFixture } from "../fixtures/fullstack.mjs";
+import { stagedResponse } from "../fixtures/staged.mjs";
 import { validateProject } from "../../server/project-sandbox.mjs";
 let dir: string,
   server: Server,
@@ -14,6 +15,7 @@ let dir: string,
   base: string,
   hold: boolean,
   calls: number;
+let holdStage = "";
 const id = "software-project";
 const req = async (
   route: string,
@@ -31,19 +33,24 @@ const req = async (
 test.beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-software-browser-"));
   hold = false;
+  holdStage = "";
   calls = 0;
   upstream = http
     .createServer(async (req, res) => {
-      for await (const _ of req) {
-      }
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      const request = JSON.parse(raw);
       calls++;
-      if (hold) return;
+      if (
+        hold ||
+        (holdStage &&
+          request.messages.at(-1).content.startsWith(`本次阶段：${holdStage}`))
+      )
+        return;
       res.setHeader("content-type", "application/json");
       res.end(
         JSON.stringify({
-          choices: [
-            { message: { content: JSON.stringify(fullstackFixture()) } },
-          ],
+          choices: [{ message: { content: stagedResponse(request) } }],
         }),
       );
     })
@@ -125,7 +132,7 @@ test("website project opens engineering; delivers source tree, ZIP, validation a
     "构建与冒烟通过",
     { timeout: 60000 },
   );
-  expect(calls).toBe(1);
+  expect(calls).toBe(5);
   await page
     .getByRole("button", { name: "server/app.mjs", exact: false })
     .click();
@@ -169,7 +176,7 @@ test("website project opens engineering; delivers source tree, ZIP, validation a
   await expect(
     page.getByRole("button", { name: "下载完整工程 ZIP" }),
   ).toBeVisible();
-  expect(calls).toBe(1);
+  expect(calls).toBe(5);
 });
 test("stop background generation, retain explicit status, do not offer fabricated download", async ({
   page,
@@ -273,7 +280,7 @@ test("new website goal selects engineering and requires confirmation before gene
     "构建与冒烟通过",
     { timeout: 60000 },
   );
-  expect(calls).toBe(1);
+  expect(calls).toBe(5);
   expect((await req("/workspace")).state.projects[0].deliveryType).toBe(
     "software",
   );
@@ -393,7 +400,85 @@ test("generation uses the selected base or deliberately starts fresh", async ({
     )
     .toBeTruthy();
   expect((await req(`/software/${id}`)).builds[0].baseBuildId).toBeNull();
+  expect(calls).toBe(11);
+});
+
+test("staged mobile recovery keeps backend checkpoint and explicit human acceptance", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  holdStage = "frontend";
+  await panel(page);
+  await expect(page.getByLabel("工程执行方式")).toHaveValue("staged");
+  await page.getByLabel("工程自动修复次数").selectOption("0");
+  await start(page);
+  await expect.poll(() => calls).toBe(3);
+  await page.getByRole("button", { name: "停止工程交付" }).click();
+  await expect(page.locator(".software-heading")).toContainText("已停止");
+  await expect(
+    page.getByRole("button", { name: "从检查点继续" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: /下载.*ZIP/ })).toHaveCount(0);
+  await expect(page.getByLabel("文件源码")).toContainText("DatabaseSync");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page
+    .getByRole("button", { name: /完整网站交付测试.*项目进度/ })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "阶段与需求验收" }),
+  ).toBeVisible();
+  await page.getByLabel("恢复追加次数").selectOption("1");
+  const dismissedResume = new Promise<void>((resolve) =>
+    page.once("dialog", async (d) => {
+      await d.dismiss();
+      resolve();
+    }),
+  );
+  await page.getByRole("button", { name: "从检查点继续" }).click();
+  await dismissedResume;
+  await expect(
+    page.getByRole("button", { name: "从检查点继续" }),
+  ).toBeEnabled();
   expect(calls).toBe(3);
+  holdStage = "";
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "从检查点继续" }).click();
+  await expect(page.locator(".software-heading")).toContainText(
+    "构建与冒烟通过",
+    { timeout: 60000 },
+  );
+  expect(calls).toBe(6);
+  await expect(
+    page.getByRole("region", { name: "逐条需求验收" }),
+  ).toContainText("尚未完成全部人工验收");
+  const first = page.locator(".engineering-acceptance > details").first();
+  await first.locator("summary").click();
+  await expect(
+    first.getByRole("button", { name: "确认此项通过" }),
+  ).toBeDisabled();
+  await first
+    .getByLabel("验收意见 1", { exact: true })
+    .fill("已检查样例新增笔记与重启读回，测试使用模拟模型");
+  page.once("dialog", (d) => d.accept());
+  await first.getByRole("button", { name: "确认此项通过" }).click();
+  await expect(first.locator("summary")).toContainText("人工通过");
+  expect(calls).toBe(6);
+  expect(
+    await page
+      .locator(".modal")
+      .evaluate((e) => e.scrollWidth <= e.clientWidth),
+  ).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await first.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "artifacts/staged-acceptance-mobile.png",
+    animations: "disabled",
+  });
 });
 
 test("mobile recommendation keeps the newer source baseline after an old version is revalidated", async ({
@@ -456,7 +541,9 @@ test("mobile recommendation keeps the newer source baseline after an old version
       { timeout: 60000 },
     )
     .toBe(true);
-  await expect(page.locator(".software-heading")).toContainText("构建与冒烟通过");
+  await expect(page.locator(".software-heading")).toContainText(
+    "构建与冒烟通过",
+  );
   await page.screenshot({
     path: "artifacts/source-baseline-390.png",
     animations: "disabled",

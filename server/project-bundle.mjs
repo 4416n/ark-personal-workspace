@@ -22,7 +22,7 @@ const fixed = [
   ".gitignore",
   "DEPLOY.md",
 ];
-const pathSchema = z
+export const pathSchema = z
   .string()
   .max(180)
   .refine((p) => {
