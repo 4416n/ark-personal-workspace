@@ -6,6 +6,9 @@ export const isBuildRunning = (build) =>
   ["generating", "validating", "cancelling"].includes(build.status);
 const stable = (b) =>
   b.status === "verified" ||
+  (b.pipeline &&
+    b.validation?.passed &&
+    b.validation.sourceHash === b.sourceHash) ||
   (b.status === "restored" && b.restoredStatus === "verified");
 
 export function sourceOrigin(build, rows) {

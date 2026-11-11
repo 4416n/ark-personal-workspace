@@ -249,6 +249,15 @@ export function createApp({
   app.post("/api/software-builds/:id/pin", (req, res) =>
     res.json(software.pin(req.params.id, req.body)),
   );
+  app.post(
+    "/api/software-builds/:id/resume",
+    asyncRoute(async (req, res) =>
+      res.json(await software.resume(req.params.id, req.body)),
+    ),
+  );
+  app.post("/api/software-builds/:id/accept", (req, res) =>
+    res.json(software.accept(req.params.id, req.body)),
+  );
   app.get("/api/software-builds/:id", (req, res) =>
     res.json(software.detail(req.params.id)),
   );
