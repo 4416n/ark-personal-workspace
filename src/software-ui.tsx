@@ -146,6 +146,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
     };
   }, [projectId, session?.shared]);
   const build = list.builds.find((b) => b.id === selected);
+  useEffect(() => setExtraAttempts(0), [build?.id, build?.resume?.next]);
   const visibleFiles = build?.pipeline?.draftFiles.length
     ? [
         ...build.pipeline.draftFiles,

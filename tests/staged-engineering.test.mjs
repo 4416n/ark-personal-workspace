@@ -610,3 +610,44 @@ test("full backup preserves partial drafts but resets restored validations and a
   };
   await assert.rejects(decodeFullBackup(gzipSync(JSON.stringify(envelope))));
 });
+test("restoring a partial full backup can actually resume without repeating completed stages", async (t) => {
+  const f = await fixture(t);
+  f.respond((body) =>
+    stageOf(body) === "frontend" ? "broken" : stagedResponse(body),
+  );
+  let b = await f.settled((await f.start()).body.id);
+  const bytes = Buffer.from(
+    await (await fetch(f.base + "/api/full-backup")).arrayBuffer(),
+  );
+  const response = await fetch(f.base + "/api/full-backup/preview", {
+    method: "POST",
+    headers: { "content-type": "application/gzip" },
+    body: bytes,
+  });
+  assert.equal(response.status, 200);
+  const preview = await response.json();
+  const restored = await f.req("/full-backup/restore", {
+    token: preview.token,
+    confirmed: true,
+    revision: 1,
+  });
+  assert.equal(restored.status, 200);
+  b = await f.get(b.id);
+  assert.equal(b.status, "restored");
+  assert.equal(f.calls.length, 3);
+  assert.equal(b.pipeline.next, "frontend");
+  f.respond(stagedResponse);
+  const resumed = await f.resume(b, 1, { revision: restored.body.revision });
+  assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+  b = await f.settled(b.id);
+  assert.equal(b.status, "verified", b.error);
+  assert.deepEqual(f.calls.map(stageOf), [
+    "contract",
+    "backend",
+    "frontend",
+    "frontend",
+    "integration",
+    "review",
+  ]);
+  assert.equal(b.acceptance.complete, false);
+});
