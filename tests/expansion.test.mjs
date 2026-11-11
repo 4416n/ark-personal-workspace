@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -159,7 +160,7 @@ test("局域网配对、一次性码、会话撤销与模型配置本机限制",
     configPath: path.join(directory, "ai.json"),
   });
   const server = app.listen(0, "0.0.0.0");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const host = `${address}:${server.address().port}`;
   const request = (route, body, headers = {}, method = body ? "POST" : "GET") =>
@@ -274,13 +275,13 @@ test("AI 执行真实记录模型用量和参考资料，取消可中断且重�
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   const app = createApp({
     shared: true,
     configPath: path.join(directory, "ai.json"),
   });
   const server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const send = (route, body, extra = {}) =>
     fetch(base + route, {

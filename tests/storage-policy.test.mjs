@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -86,7 +87,7 @@ async function apiFixture(t) {
     }),
   );
   const server = app.listen(0, "0.0.0.0");
-  await new Promise((resolve) => server.once("listening", resolve));
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = async (route, body, headers = {}) =>
     fetch((headers.host ? `http://${headers.host}` : base) + "/api" + route, {

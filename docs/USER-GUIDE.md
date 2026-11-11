@@ -182,6 +182,8 @@ npm run test:sandbox
 
 ## 开发与验证
 
+3.5 新增跨平台启动、自检与批量 TXT/Markdown 导入，详见 [安装与资料导入](INSTALL.md)。工程受控交互预览的条件、临时数据和待完成的 Linux 实证见 [交互预览](INTERACTIVE-PREVIEW.md)。截图仍只代表静态证据；只有满足条件并主动启动预览会话后才可交互。
+
 ```bash
 npm run dev       # Vite 5173 / API 3001
 npm run build     # TypeScript + 生产构建
@@ -189,6 +191,7 @@ npm test          # 数据、自动执行、工程协议、RAG 与备份等逻�
 npx playwright install chromium
 npm run test:e2e  # 核心流程、工程交付、手机、同步/冲突/断网与备份回归
 npm run test:sandbox # Linux 真实隔离、动态持久化、取消清理与只读防篡改回归
+npm run test:preview # Linux 真实交互预览、双层隔离与会话回收回归
 ARK_REAL_BROWSER_BUILD=1 npx playwright test tests/browser/software.spec.ts # 界面连接真实隔离验证器
 ```
 

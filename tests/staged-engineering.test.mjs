@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -56,7 +57,7 @@ async function fixture(t) {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   const boot = async () => {
     app = createApp({
       shared: true,
@@ -67,7 +68,7 @@ async function fixture(t) {
       },
     });
     server = app.listen(0, "127.0.0.1");
-    await new Promise((r) => server.once("listening", r));
+    await waitForHttp(server);
     base = `http://127.0.0.1:${server.address().port}`;
   };
   const stop = async () => {

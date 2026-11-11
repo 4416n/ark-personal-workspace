@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -86,7 +87,7 @@ async function fixture(t) {
   await fs.writeFile(configPath, credentials, { mode: 0o600 });
   const app = createApp({ shared: true, lan: true, configPath });
   const server = app.listen(0, "0.0.0.0");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const req = async (route, body, headers = {}) => {
     const binary = Buffer.isBuffer(body);

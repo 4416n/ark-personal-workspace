@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -25,7 +26,7 @@ test.beforeEach(async () => {
     },
   });
   server = app.listen(0, "127.0.0.1");
-  await new Promise((resolve) => server.once("listening", resolve));
+  await waitForHttp(server);
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 

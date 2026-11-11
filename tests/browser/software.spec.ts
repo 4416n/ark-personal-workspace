@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -62,7 +63,7 @@ test.beforeEach(async () => {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   app = createApp({
     shared: true,
     configPath: path.join(dir, "ai-config.json"),
@@ -87,7 +88,7 @@ test.beforeEach(async () => {
     },
   });
   server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const s = seedWorkspace();
   s.projects = [

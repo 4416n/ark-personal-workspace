@@ -139,6 +139,11 @@ export const knowledgeSchema = z.object({
   updatedAt: stamp,
   projectId: id.optional(),
   sourceTaskId: id.optional(),
+  sourceFile: z.object({
+    name: z.string().min(1).max(255),
+    modifiedAt: stamp,
+    importedAt: stamp,
+  }).optional(),
 });
 export const templateSchema = z
   .object({

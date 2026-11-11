@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -50,12 +51,13 @@ test("API 离线规划、私有凭据、真实请求转发及错误处理", asyn
       }),
     );
   });
-  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  upstream.listen(0, "127.0.0.1");
+  await waitForHttp(upstream);
   const app = createApp({
     configPath: path.join(directory, "ai.json"),
   });
   const server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = async (
     route,

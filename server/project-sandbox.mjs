@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { materialize } from "./project-bundle.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const childEnv = {
+export const childEnv = {
   PATH: "/usr/bin:/bin",
   HOME: os.homedir(),
   XDG_RUNTIME_DIR:
@@ -59,7 +59,7 @@ const command = (
       resolve({ code, out, log, report, over, signal: sig });
     });
   });
-async function toolchainMounts() {
+export async function toolchainMounts() {
   const lock = JSON.parse(
     await fs.readFile(
       path.join(root, "server/scaffold/package-lock.json"),
@@ -84,7 +84,14 @@ async function toolchainMounts() {
   }
   return mounts;
 }
-function bubbleArgs(input, browser, mounts) {
+export function bubbleArgs(
+  input,
+  browser,
+  mounts,
+  entry = "sandbox-entry.mjs",
+) {
+  if (!["sandbox-entry.mjs", "preview-entry.mjs"].includes(entry))
+    throw new Error("Unknown trusted sandbox entry");
   return [
     "--unshare-all",
     "--die-with-parent",
@@ -135,7 +142,7 @@ function bubbleArgs(input, browser, mounts) {
     browser,
     "/browsers",
     "--ro-bind",
-    path.join(root, "server/sandbox-entry.mjs"),
+    path.join(root, "server", entry),
     "/entry.mjs",
     "--ro-bind",
     process.execPath,

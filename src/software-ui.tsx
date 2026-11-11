@@ -12,6 +12,7 @@ import {
 import { useApp } from "./context";
 import { api } from "./store";
 import { EnvironmentChecks, type EnvironmentStatus } from "./environment-ui";
+import { PreviewPanel } from "./preview-ui";
 import {
   EngineeringProgress,
   type Pipeline,
@@ -850,6 +851,20 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                 启动。
               </figcaption>
             </figure>
+          )}
+          {!!build.files.length && (
+            <PreviewPanel
+              key={build.id}
+              buildId={build.id}
+              sourceHash={build.sourceHash}
+              available={cap?.available === true}
+              eligible={
+                build.status === "verified" &&
+                build.validation?.passed === true &&
+                !build.legacyVerification &&
+                !build.stale
+              }
+            />
           )}
           {!!build.files.length && (
             <details className="software-environment">

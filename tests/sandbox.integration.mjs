@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 // Deliberately opt-in. Runs generated fixture code ONLY through project-sandbox.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -44,7 +45,7 @@ test("actual sandbox blocks host files/environment/network and detects a broken 
       res.end("host");
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));

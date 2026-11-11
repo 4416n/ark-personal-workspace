@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -73,7 +74,7 @@ async function fixture(t, count = 2) {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   let app, server, base;
   async function boot() {
     app = createApp({
@@ -81,7 +82,7 @@ async function fixture(t, count = 2) {
       configPath: path.join(dir, "ai-config.json"),
     });
     server = app.listen(0, "127.0.0.1");
-    await new Promise((r) => server.once("listening", r));
+    await waitForHttp(server);
     base = `http://127.0.0.1:${server.address().port}`;
   }
   await boot();

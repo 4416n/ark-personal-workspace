@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diagnoseSandbox } from "../server/project-sandbox.mjs";
@@ -191,7 +192,7 @@ test("capabilities API returns diagnostics, honors refresh and rejects untrusted
     },
   });
   const server = app.listen(0, "127.0.0.1");
-  await new Promise((resolve) => server.once("listening", resolve));
+  await waitForHttp(server);
   t.after(async () => {
     await app.locals.close();
     server.closeAllConnections();

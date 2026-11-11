@@ -1,4 +1,5 @@
 import { KnowledgeRetrieval } from "./rag-ui";
+import { KnowledgeImport } from "./knowledge-import";
 import { CancelGeneration, Sources } from "./runs-ui";
 import type { Passage } from "../shared/retrieval.mjs";
 import { useRef, useState } from "react";
@@ -293,40 +294,8 @@ export function Tasks() {
 }
 
 export function KnowledgePage() {
-  const { state, open, update, notify } = useApp();
+  const { state, open } = useApp();
   const [query, setQuery] = useState("");
-  const file = useRef<HTMLInputElement>(null);
-  const importNote = async (f?: File) => {
-    if (!f) return;
-    if (!/\.(md|txt)$/i.test(f.name) || f.size > 200000) {
-      notify("请选择 200 KB 以内的 Markdown 或 TXT 文件", true);
-      return;
-    }
-    try {
-      const content = await f.text();
-      if (content.length > 100000)
-        throw new Error("内容超过 10 万字符，请拆分后导入");
-      update(
-        (s) => ({
-          ...s,
-          knowledge: [
-            {
-              id: uid(),
-              title: f.name.replace(/\.[^.]+$/, "").slice(0, 200),
-              content,
-              category: "资料",
-              updatedAt: now(),
-            },
-            ...s.knowledge,
-          ],
-        }),
-        `导入资料：${f.name.slice(0, 150)}`,
-      );
-      notify("资料已加入知识空间");
-    } catch (e) {
-      notify((e as Error).message, true);
-    }
-  };
   const notes = state.knowledge.filter((k) =>
     `${k.title} ${k.content}`.toLowerCase().includes(query.toLowerCase()),
   );
@@ -338,20 +307,7 @@ export function KnowledgePage() {
         description="让经验留下来，让 AI 更懂你的背景与习惯。"
         action={
           <div className="inline-controls">
-            <input
-              type="file"
-              ref={file}
-              hidden
-              accept=".md,.txt"
-              onChange={(e) => {
-                void importNote(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-            <button className="button" onClick={() => file.current?.click()}>
-              <ArrowDownToLine size={16} />
-              导入资料
-            </button>
+            <KnowledgeImport />
             <button
               className="button primary"
               onClick={() => open({ type: "knowledge" })}
@@ -406,6 +362,7 @@ export function KnowledgePage() {
             </div>
             <h3>{k.title}</h3>
             <p>{k.content.replace(/[#*`>]/g, "").slice(0, 150)}</p>
+            {k.sourceFile && <small className="knowledge-source">来源：{k.sourceFile.name} · 文件更新 {new Date(k.sourceFile.modifiedAt).toLocaleDateString("zh-CN")}</small>}
             <footer>
               <span>{new Date(k.updatedAt).toLocaleDateString("zh-CN")}</span>
               <ArrowUpRight size={16} />
