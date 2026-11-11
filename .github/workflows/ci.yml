@@ -11,8 +11,13 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Build, unit and browser tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,11 +27,46 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: npx playwright install --with-deps chromium
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - if: runner.os == 'Windows'
+        run: npx playwright install chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: browser-test-failures
+          name: browser-test-failures-${{ matrix.os }}
           path: test-results/
+          retention-days: 7
+
+  real-sandbox:
+    name: Real Linux sandbox and engineering browser delivery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Prepare user systemd, D-Bus and isolated namespaces
+        run: bash scripts/prepare-ci-sandbox.sh
+      - name: Require an operational sandbox
+        run: node scripts/check-sandbox.mjs
+      - name: Run real sandbox regression serially
+        run: node --test --test-concurrency=1 tests/sandbox.integration.mjs
+      - name: Exercise real engineering delivery through the browser
+        env:
+          ARK_REAL_BROWSER_BUILD: "1"
+        run: npx playwright test tests/browser/software.spec.ts --workers=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-sandbox-evidence
+          path: |
+            artifacts/
+            test-results/
           retention-days: 7

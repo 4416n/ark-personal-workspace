@@ -318,6 +318,12 @@ export function BackupPanel() {
       .catch((e) => setError(e.message));
   useEffect(() => {
     if (session?.shared) void load();
+    const snapshotsChanged = () => {
+      if (session?.shared) void load();
+    };
+    window.addEventListener("ark-snapshots-changed", snapshotsChanged);
+    return () =>
+      window.removeEventListener("ark-snapshots-changed", snapshotsChanged);
   }, [session?.shared]);
   if (!session?.shared) return null;
   return (
@@ -332,8 +338,9 @@ export function BackupPanel() {
         </div>
       </div>
       <p className="field-hint">
-        业务数据存入电脑数据库；保留最近 50 份快照和 30
-        天每日备份。仅业务数据，不含工程源码与执行日志；整机迁移请用完整备份。恢复前会再次备份当前状态。
+        业务数据存入电脑数据库；新增快照时保留最近最多 50 份、合计 32 MiB，
+        至少保留最新一份。另保留 30 个有保存记录日期的每日备份。
+        仅业务数据，不含工程源码与执行日志；整机迁移请用完整备份。恢复前会再次备份当前状态。
       </p>
       <div className="inline-controls feature-actions">
         {migrationBackup && (

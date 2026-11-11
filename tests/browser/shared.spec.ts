@@ -7,6 +7,7 @@ import http from "node:http";
 import { createApp } from "../../server/index.mjs";
 import { lanAddresses } from "../../server/access.mjs";
 import { seedWorkspace } from "../../src/domain";
+import { removeTestDirectory } from "../helpers/filesystem.mjs";
 
 let directory: string,
   server: Server,
@@ -35,8 +36,8 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
-  app.locals.close();
-  await fs.rm(directory, { recursive: true, force: true });
+  await app.locals.close();
+  await removeTestDirectory(directory);
 });
 async function openTask(page: Page) {
   await page.goto(`${new URL(page.url()).origin}/#tasks`);

@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import { readVerifiedZip } from "../helpers/zip.mjs";
 import { seedWorkspace } from "../../src/domain";
 import { syncDeliveredKnowledge } from "../../shared/knowledge-sync.mjs";
 
@@ -58,18 +59,9 @@ for (const width of [1440, 390]) {
       .click();
     const download = await downloadEvent;
     expect(download.suggestedFilename()).toBe("交付目录回归-任务文档.zip");
-    expect(
-      execFileSync("unzip", ["-t", (await download.path())!], {
-        encoding: "utf8",
-      }),
-    ).toContain("No errors");
-    expect(
-      execFileSync(
-        "unzip",
-        ["-p", (await download.path())!, "01-最终使用手册.md"],
-        { encoding: "utf8" },
-      ),
-    ).toContain("实际交付内容");
+    const files = await readVerifiedZip(await fs.readFile((await download.path())!));
+    expect([...files.keys()]).toEqual(["00-总文档.md", "01-最终使用手册.md"]);
+    expect(files.get("01-最终使用手册.md")).toContain("实际交付内容");
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

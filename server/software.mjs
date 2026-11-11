@@ -97,13 +97,28 @@ export function softwareDelivery({
       save(b);
     }
   let capCache = null,
-    capAt = 0;
-  async function capabilities() {
-    if (!capCache || Date.now() - capAt > 30000) {
-      capCache = await capability();
-      capAt = Date.now();
-    }
-    return capCache;
+    capAt = 0,
+    capPending = null;
+  async function capabilities({ refresh = false } = {}) {
+    if (closed) throw fail("服务已停止", 503);
+    // Concurrent clients share one probe; even explicit refresh is limited to once per 5s.
+    if (capPending) return capPending;
+    const age = Date.now() - capAt;
+    if (capCache && age >= 0 && age < (refresh ? 5000 : 30000)) return capCache;
+    capPending = Promise.resolve()
+      .then(() => capability())
+      .then((result) => {
+        capAt = Date.now();
+        capCache = {
+          ...result,
+          checkedAt: result.checkedAt || new Date(capAt).toISOString(),
+        };
+        return capCache;
+      })
+      .finally(() => {
+        capPending = null;
+      });
+    return capPending;
   }
   function details(b, context) {
     if (!b) return null;

@@ -12,8 +12,9 @@ import { seedWorkspace, stateSchema, templateSchema } from "../src/domain.ts";
 import { projectToTemplate, instantiateTemplate } from "../src/templates.ts";
 import { mergeWorkspace } from "../shared/merge.mjs";
 import { retrieve } from "../shared/retrieval.mjs";
+import { assertPosixMode, removeTestDirectory } from "./helpers/filesystem.mjs";
 
-test("数据库原子保存、过期版本拒绝、备份预览及重启持久化", async () => {
+test("数据库原子保存、过期版本拒绝、备份预览及重启持久化", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ark-db-"));
   let db = openDatabase(directory);
   try {
@@ -28,10 +29,7 @@ test("数据库原子保存、过期版本拒绝、备份预览及重启持久�
       db.save({ ...s, tasks: [{ ...s.tasks[0], dependsOn: ["missing"] }] }, 2),
     );
     assert.equal(db.read().revision, 2);
-    assert.equal(
-      (await fs.stat(path.join(directory, "workspace.sqlite"))).mode & 0o777,
-      0o600,
-    );
+    await assertPosixMode(t, path.join(directory, "workspace.sqlite"));
     assert.equal(
       (await fs.readdir(path.join(directory, "daily-backups"))).length,
       1,
@@ -41,7 +39,7 @@ test("数据库原子保存、过期版本拒绝、备份预览及重启持久�
     assert.deepEqual(db.read().state, next);
   } finally {
     db.close();
-    await fs.rm(directory, { recursive: true, force: true });
+    await removeTestDirectory(directory);
   }
 });
 
@@ -248,8 +246,8 @@ test("局域网配对、一次性码、会话撤销与模型配置本机限制",
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
-    app.locals.close();
-    await fs.rm(directory, { recursive: true, force: true });
+    await app.locals.close();
+    await removeTestDirectory(directory);
   }
 });
 
@@ -346,10 +344,10 @@ test("AI 执行真实记录模型用量和参考资料，取消可中断且重�
       new Promise((r) => server.close(r)),
       new Promise((r) => upstream.close(r)),
     ]);
-    app.locals.close();
+    await app.locals.close();
   }
   const reopened = openDatabase(directory);
   assert.equal(reopened.listRuns().length, 2);
   reopened.close();
-  await fs.rm(directory, { recursive: true, force: true });
+  await removeTestDirectory(directory);
 });

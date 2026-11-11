@@ -7,6 +7,8 @@ import {
   encodeFullBackup,
   decodeFullBackup,
   backupDigest,
+  MAX_BACKUP_BYTES,
+  MAX_BACKUP_RAW_BYTES,
 } from "./full-backup.mjs";
 const route = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res)).catch(next);
@@ -25,7 +27,7 @@ export function backupApi(
   };
   const assertIdle = () => {
     if (!idle())
-      throw fail("请先停止所有 AI/工程执行，等待结束后再迁移备份", 409);
+      throw fail("请先停止所有 AI/工程执行，等待结束后再整理快照或迁移备份", 409);
   };
   const requireDb = (_req, _res, next) =>
     database ? next() : next(fail("完整备份需要电脑共享模式"));
@@ -35,6 +37,43 @@ export function backupApi(
           .status(423)
           .json({ error: "正在恢复完整备份，请等待完成并刷新页面" })
       : next(),
+  );
+  const storageStatus = () => {
+    const status = database.storageStatus();
+    return {
+      ...status,
+      fullBackup: {
+        ...status.fullBackup,
+        rawLimitBytes: MAX_BACKUP_RAW_BYTES,
+        compressedLimitBytes: MAX_BACKUP_BYTES,
+      },
+      note:
+        "此处统计备份内容的大小，不等于数据库的磁盘占用。实际导出还需满足原始档案 256 MiB、压缩档案 64 MiB 的限制。",
+    };
+  };
+  app.get(
+    "/api/storage-status",
+    access.localOnly,
+    requireDb,
+    route(async (_req, res) => res.json(storageStatus())),
+  );
+  app.post(
+    "/api/snapshots/prune",
+    access.localOnly,
+    requireDb,
+    route(async (req, res) => {
+      const { revision, snapshotFingerprint } = z
+        .object({
+          confirmed: z.literal(true),
+          revision: z.number().int().min(0),
+          snapshotFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(req.body);
+      assertIdle();
+      const result = database.pruneSnapshots(revision, snapshotFingerprint);
+      if (result.removedCount) clear();
+      res.json({ ok: true, ...result, status: storageStatus() });
+    }),
   );
   app.get(
     "/api/full-backup",

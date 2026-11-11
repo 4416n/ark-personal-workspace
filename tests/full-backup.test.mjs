@@ -22,6 +22,7 @@ import {
   backupDigest,
 } from "../server/full-backup.mjs";
 import { lanAddresses } from "../server/access.mjs";
+import { assertPosixMode, removeTestDirectory } from "./helpers/filesystem.mjs";
 async function fixture(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-full-backup-"));
   const state = seedWorkspace();
@@ -112,7 +113,7 @@ async function fixture(t) {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
     await app.locals.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   return {
     dir,
@@ -149,7 +150,7 @@ test("complete archive round-trip restores source/logs/jobs/snapshots into an em
   const db = openDatabase(target);
   t.after(async () => {
     db.close();
-    await fs.rm(target, { recursive: true, force: true });
+    await removeTestDirectory(target);
   });
   const restored = db.restore(decoded.data, 0);
   assert.equal(restored.revision, 1);
@@ -194,7 +195,7 @@ test("preview is read-only; confirmed restore makes an independent safety archiv
   assert.equal(response.status, 200);
   const result = await response.json();
   const safety = path.join(f.dir, "full-backups", result.safetyBackup);
-  assert.equal((await fs.stat(safety)).mode & 0o777, 0o600);
+  await assertPosixMode(t, safety);
   assert.equal(
     (await decodeFullBackup(await fs.readFile(safety))).counts.builds,
     1,
@@ -267,7 +268,7 @@ test("atomic restore rolls back every table if a later insert fails", async (t) 
   const db = openDatabase(dir);
   t.after(async () => {
     db.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   db.save(seedWorkspace(), 0);
   db.saveRun({

@@ -17,6 +17,7 @@ import {
 import { decodeFullBackup, backupDigest } from "../server/full-backup.mjs";
 import { fullstackFixture } from "./fixtures/fullstack.mjs";
 import { stagedResponse } from "./fixtures/staged.mjs";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn) {
@@ -133,7 +134,7 @@ async function fixture(t) {
     await stop();
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(r));
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   return {
     dir,

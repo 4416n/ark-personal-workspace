@@ -11,6 +11,7 @@ import {
   substitute,
   sqliteContains,
 } from "../server/scaffold/scripts/persistence.mjs";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
 
 test("dynamic contract rejects missing runtime bindings, unsafe paths, wrong lifecycle methods and ID mappings", () => {
   const good = fullstackFixture();
@@ -71,7 +72,7 @@ test("runtime substitution binds only known values without executing JSON conten
 });
 test("SQLite evidence inspects declared business fields, not empty headers or unrelated audit history", async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-sql-evidence-"));
-  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  t.after(() => removeTestDirectory(dir));
   const db = new DatabaseSync(path.join(dir, "test.sqlite"));
   db.exec(
     "CREATE TABLE notes(id INTEGER PRIMARY KEY,title TEXT); CREATE TABLE audit(message TEXT)",
@@ -96,14 +97,25 @@ test("SQLite evidence inspects declared business fields, not empty headers or un
     ],
     ["new-random-token"],
   );
-  await fs.symlink(
-    path.join(dir, "test.sqlite"),
-    path.join(dir, "link.sqlite"),
-  );
-  await assert.rejects(
-    sqliteContains(dir, ["new-random-token"], storage),
-    /符号链接/,
-  );
+  await t.test("rejects symlinked SQLite evidence", async (linkTest) => {
+    try {
+      await fs.symlink(
+        path.join(dir, "test.sqlite"),
+        path.join(dir, "link.sqlite"),
+        "file",
+      );
+    } catch (error) {
+      if (process.platform === "win32" && ["EPERM", "EACCES"].includes(error.code)) {
+        linkTest.skip("Windows needs Developer Mode or symlink privilege; SQLite content assertions still ran");
+        return;
+      }
+      throw error;
+    }
+    await assert.rejects(
+      sqliteContains(dir, ["new-random-token"], storage),
+      /符号链接/,
+    );
+  });
 });
 
 test("ID pointer validation rejects a long malformed path without ambiguous regex repetition", () => {

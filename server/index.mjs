@@ -235,7 +235,11 @@ export function createApp({
   );
   app.get(
     "/api/software-capabilities",
-    asyncRoute(async (_req, res) => res.json(await software.capabilities())),
+    asyncRoute(async (req, res) =>
+      res.json(
+        await software.capabilities({ refresh: req.query.refresh === "1" }),
+      ),
+    ),
   );
   app.get("/api/software/:projectId", (req, res) =>
     res.json(software.list(req.params.projectId)),
