@@ -5,8 +5,10 @@ import { randomUUID } from "node:crypto";
 import { stateSchema, emptyWorkspace } from "../src/domain.ts";
 import { protectedBuilds, retainedBuildIds } from "./build-policy.mjs";
 import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
+import { storagePolicy, snapshotRetention } from "./storage-policy.mjs";
 
-export function openDatabase(directory) {
+export function openDatabase(directory, options = {}) {
+  const policy = storagePolicy(options);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = path.join(directory, "workspace.sqlite");
   const db = new DatabaseSync(file);
@@ -28,21 +30,143 @@ export function openDatabase(directory) {
         }
       : { state: null, revision: 0 };
   };
+  const snapshotPlan = () =>
+    snapshotRetention(
+      db
+        .prepare(
+          "SELECT id, revision, length(CAST(body AS BLOB)) AS bytes FROM snapshots ORDER BY rowid DESC",
+        )
+        .all(),
+      policy,
+    );
+  const applySnapshotPlan = (plan) => {
+    const remove = db.prepare("DELETE FROM snapshots WHERE id=?");
+    for (const id of plan.removeIds) remove.run(id);
+  };
+  const sizes = () =>
+    Object.fromEntries(
+      [
+        ["workspace", "workspace"],
+        ["snapshots", "snapshots"],
+        ["builds", "software_builds"],
+        ["runs", "runs"],
+        ["automations", "automations"],
+      ].map(([key, table]) => [
+        key,
+        {
+          ...db
+            .prepare(
+              `SELECT COUNT(*) AS count, COALESCE(SUM(length(CAST(body AS BLOB))),0) AS bytes FROM ${table}`,
+            )
+            .get(),
+        },
+      ]),
+    );
+  const storageStatus = () => {
+    // SQL byte lengths avoid loading/parsing project content, logs or sources.
+    // This read never applies retention, including to an older/restored database.
+    db.exec("BEGIN");
+    try {
+      const tables = sizes();
+      const revision = db
+        .prepare("SELECT revision FROM workspace WHERE id=1")
+        .get()?.revision || 0;
+      const logicalBytes = Object.values(tables).reduce(
+        (sum, table) => sum + table.bytes,
+        0,
+      );
+      const { removeIds: _ids, ...retention } = snapshotPlan();
+      const withinLogicalLimit = logicalBytes <= policy.fullBackupMaxBytes;
+      const warnings = [];
+      if (!withinLogicalLimit)
+        warnings.push(
+          "当前逻辑数据超过完整备份上限；可先整理超额旧快照，仍超限时请使用 SQLite 在线备份。",
+        );
+      if (retention.prunableCount)
+        warnings.push(
+          `有 ${retention.prunableCount} 份旧快照超过保留上限，可确认后整理；读取状态和导出不会删除历史。`,
+        );
+      if (retention.oversizedLatest)
+        warnings.push(
+          "最新一份快照已超过快照字节预算，仍予保留以便回滚；整理不会删除这份快照。",
+        );
+      db.exec("COMMIT");
+      return {
+        revision,
+        tables,
+        fullBackup: {
+          logicalBytes,
+          logicalLimitBytes: policy.fullBackupMaxBytes,
+          withinLogicalLimit,
+        },
+        snapshots: {
+          maxCount: policy.snapshotMaxCount,
+          maxBytes: policy.snapshotMaxBytes,
+          keepLatest: true,
+          ...retention,
+        },
+        canFullBackup: withinLogicalLimit,
+        warning: warnings.join(" "),
+      };
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  const pruneSnapshots = (expected, snapshotFingerprint) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const revision = db
+        .prepare("SELECT revision FROM workspace WHERE id=1")
+        .get()?.revision || 0;
+      if (revision !== expected)
+        throw Object.assign(new Error("数据已变化，请刷新容量信息后再整理"), {
+          status: 409,
+        });
+      const plan = snapshotPlan();
+      if (plan.fingerprint !== snapshotFingerprint)
+        throw Object.assign(new Error("快照已变化，请刷新容量信息后重新确认"), {
+          status: 409,
+        });
+      applySnapshotPlan(plan);
+      if (plan.prunableCount)
+        db.prepare("UPDATE workspace SET revision=?, at=? WHERE id=1").run(
+          revision + 1,
+          new Date().toISOString(),
+        );
+      db.exec("COMMIT");
+      return {
+        removedCount: plan.prunableCount,
+        removedBytes: plan.prunableBytes,
+      };
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  };
   const snapshot = (label = "手动备份") => {
-    const row = db.prepare("SELECT * FROM workspace WHERE id=1").get();
-    if (!row) return null;
-    const id = randomUUID();
-    db.prepare("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)").run(
-      id,
-      row.revision,
-      row.body,
-      new Date().toISOString(),
-      label,
-    );
-    db.exec(
-      "DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY rowid DESC LIMIT 50)",
-    );
-    return id;
+    const ownTransaction = !db.isTransaction;
+    if (ownTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = db.prepare("SELECT * FROM workspace WHERE id=1").get();
+      let id = null;
+      if (row) {
+        id = randomUUID();
+        db.prepare("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)").run(
+          id,
+          row.revision,
+          row.body,
+          new Date().toISOString(),
+          label,
+        );
+        applySnapshotPlan(snapshotPlan());
+      }
+      if (ownTransaction) db.exec("COMMIT");
+      return id;
+    } catch (error) {
+      if (ownTransaction && db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   };
   const save = (state, expected, label = "自动保存前快照") => {
     const parsed = stateSchema.parse(
@@ -113,33 +237,19 @@ export function openDatabase(directory) {
         finishedAt: new Date().toISOString(),
       });
   const dump = () => {
-    const bytes = [
-      "workspace",
-      "snapshots",
-      "runs",
-      "automations",
-      "software_builds",
-    ].reduce(
-      (sum, table) =>
-        sum +
-        Number(
-          db
-            .prepare(
-              `SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS size FROM ${table}`,
-            )
-            .get().size,
-        ),
-      0,
-    );
-    if (bytes > 250 * 1024 * 1024)
-      throw Object.assign(
-        new Error(
-          "备份数据超过容量上限，请使用 SQLite 在线备份；未截断或删除任何数据",
-        ),
-        { status: 413 },
-      );
     db.exec("BEGIN");
     try {
+      const bytes = Object.values(sizes()).reduce(
+        (sum, table) => sum + table.bytes,
+        0,
+      );
+      if (bytes > policy.fullBackupMaxBytes)
+        throw Object.assign(
+          new Error(
+            "备份数据超过容量上限，请整理超额旧快照或使用 SQLite 在线备份；未截断或删除任何数据",
+          ),
+          { status: 413 },
+        );
       const current = read();
       const result = {
         workspace: current.state ? current : null,
@@ -222,6 +332,8 @@ export function openDatabase(directory) {
   return {
     dump,
     restore,
+    storageStatus,
+    pruneSnapshots,
     saveBuild: (build) => {
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -283,7 +395,7 @@ export function openDatabase(directory) {
     backups: () =>
       db
         .prepare(
-          "SELECT id, revision, at, label, length(body) AS size FROM snapshots ORDER BY rowid DESC",
+          "SELECT id, revision, at, label, length(CAST(body AS BLOB)) AS size FROM snapshots ORDER BY rowid DESC",
         )
         .all(),
     backup: (id) => {

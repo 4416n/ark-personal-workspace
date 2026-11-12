@@ -15,6 +15,7 @@ import { softwareDelivery } from "./software.mjs";
 import { generationMessages } from "./work-output.mjs";
 import { stateSchema } from "../src/domain.ts";
 import { reviewBasis } from "../shared/contract.mjs";
+import { previewApi } from "./preview-api.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
@@ -68,6 +69,7 @@ export function createApp({
   lan = false,
   dataDir = path.dirname(configPath),
   softwareOptions = {},
+  previewOptions = {},
 } = {}) {
   const app = express();
   app.disable("x-powered-by");
@@ -83,14 +85,15 @@ export function createApp({
     runs,
     completion,
     readConfig,
-    isSoftwareActive: () => !!software.active(),
+    isSoftwareActive: () => !!software.active() || !!previews.active(),
   });
   const software = softwareDelivery({
     database,
     runs,
     completion,
     readConfig,
-    isDocumentActive: () => automation.active().length > 0,
+    isDocumentActive: () =>
+      automation.active().length > 0 || !!previews.active(),
     ...softwareOptions,
   });
   let closePromise;
@@ -98,10 +101,11 @@ export function createApp({
     if (closePromise) return closePromise;
     backups.close();
     const stopped = software.close();
+    const stoppedPreviews = previews.close();
     automation.close();
     runs.close();
     database?.close();
-    closePromise = Promise.resolve(stopped);
+    closePromise = Promise.all([stopped, stoppedPreviews]);
     return closePromise;
   };
   app.use("/api", access.guard);
@@ -113,9 +117,16 @@ export function createApp({
     dataDir,
     idle: () =>
       !software.active() &&
+      !previews.active() &&
       !automation.active().length &&
       !runs.list().some((r) => r.status === "running"),
     afterRestore: () => automation.reload(),
+  });
+  const previews = previewApi(app, {
+    database,
+    access,
+    idle: () => !software.active() && !automation.active().length,
+    ...previewOptions,
   });
   app.get("/api/workspace", (req, res) => {
     const current = database?.read() || { state: null, revision: 0 };
@@ -142,6 +153,7 @@ export function createApp({
         return res.status(409).json({ error: "工作台已更新，请合并后保存" });
       automation.guardWrite(next);
       software.guardWrite(next);
+      previews.guardWrite(next);
       if (current.state) {
         const previousTasks = new Map(
           current.state.tasks.map((t) => [t.id, t]),
@@ -235,7 +247,11 @@ export function createApp({
   );
   app.get(
     "/api/software-capabilities",
-    asyncRoute(async (_req, res) => res.json(await software.capabilities())),
+    asyncRoute(async (req, res) =>
+      res.json(
+        await software.capabilities({ refresh: req.query.refresh === "1" }),
+      ),
+    ),
   );
   app.get("/api/software/:projectId", (req, res) =>
     res.json(software.list(req.params.projectId)),

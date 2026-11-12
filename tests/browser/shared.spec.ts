@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +8,7 @@ import http from "node:http";
 import { createApp } from "../../server/index.mjs";
 import { lanAddresses } from "../../server/access.mjs";
 import { seedWorkspace } from "../../src/domain";
+import { removeTestDirectory } from "../helpers/filesystem.mjs";
 
 let directory: string,
   server: Server,
@@ -27,7 +29,7 @@ test.beforeEach(async () => {
     configPath: path.join(directory, "ai-config.json"),
   });
   server = app.listen(0, "0.0.0.0");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   const port = (server.address() as { port: number }).port;
   desktop = `http://127.0.0.1:${port}`;
   mobile = `http://${lanAddresses()[0].address}:${port}`;
@@ -35,8 +37,8 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
-  app.locals.close();
-  await fs.rm(directory, { recursive: true, force: true });
+  await app.locals.close();
+  await removeTestDirectory(directory);
 });
 async function openTask(page: Page) {
   await page.goto(`${new URL(page.url()).origin}/#tasks`);
@@ -329,7 +331,7 @@ test("执行面板展示失败原因、可重试并保存结果，也能取消�
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   try {
     await fetch(desktop + "/api/config", {
       method: "POST",

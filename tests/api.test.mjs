@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -5,8 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { createApp } from "../server/index.mjs";
+import { assertPosixMode, removeTestDirectory } from "./helpers/filesystem.mjs";
 
-test("API 离线规划、私有凭据、真实请求转发及错误处理", async () => {
+test("API 离线规划、私有凭据、真实请求转发及错误处理", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ark-test-"));
   let received;
   let fail = false;
@@ -49,11 +51,13 @@ test("API 离线规划、私有凭据、真实请求转发及错误处理", asyn
       }),
     );
   });
-  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
-  const server = createApp({
+  upstream.listen(0, "127.0.0.1");
+  await waitForHttp(upstream);
+  const app = createApp({
     configPath: path.join(directory, "ai.json"),
-  }).listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await waitForHttp(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = async (
     route,
@@ -105,10 +109,7 @@ test("API 离线规划、私有凭据、真实请求转发及错误处理", asyn
         config.apiKey,
       ),
     );
-    assert.equal(
-      (await fs.stat(path.join(directory, "ai.json"))).mode & 0o777,
-      0o600,
-    );
+    await assertPosixMode(t, path.join(directory, "ai.json"));
     assert.equal((await request("/api/test", {})).data.ok, true);
     assert.equal(received.auth, "Bearer secret-test-token");
     assert.equal(received.url, "/v1/chat/completions");
@@ -170,8 +171,11 @@ test("API 离线规划、私有凭据、真实请求转发及错误处理", asyn
       false,
     );
   } finally {
+    await app.locals.close();
+    server.closeAllConnections();
+    upstream.closeAllConnections();
     await new Promise((r) => server.close(r));
     await new Promise((r) => upstream.close(r));
-    await fs.rm(directory, { recursive: true, force: true });
+    await removeTestDirectory(directory);
   }
 });

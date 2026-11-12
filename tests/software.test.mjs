@@ -1,10 +1,10 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { execFileSync } from "node:child_process";
 import { createApp } from "../server/index.mjs";
 import { openDatabase } from "../server/database.mjs";
 import { seedWorkspace } from "../src/domain.ts";
@@ -16,6 +16,8 @@ import {
   zipFiles,
 } from "../server/project-bundle.mjs";
 import { fullstackFixture } from "./fixtures/fullstack.mjs";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
+import { readVerifiedZip } from "./helpers/zip.mjs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn) => {
   for (let i = 0; i < 400; i++) {
@@ -56,7 +58,7 @@ async function fixture(t) {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   const boot = async () => {
     app = createApp({
       shared: true,
@@ -67,14 +69,13 @@ async function fixture(t) {
       },
     });
     server = app.listen(0, "127.0.0.1");
-    await new Promise((r) => server.once("listening", r));
+    await waitForHttp(server);
     base = `http://127.0.0.1:${server.address().port}`;
   };
   const stop = async () => {
-    app.locals.close();
+    await app.locals.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
-    await sleep(30);
   };
   await boot();
   const req = async (
@@ -122,7 +123,7 @@ async function fixture(t) {
     await stop();
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(r));
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   return {
     req,
@@ -182,24 +183,14 @@ test("engineering protocol rejects documents, traversal, protected files, duplic
   assert.throws(() => parseBundle("# Only a plan"));
   assert.throws(() => parseBundle(JSON.stringify(good).slice(0, -4)));
 });
-test("full ZIP contains actual UTF-8 sources, pinned lock, deployment, tests and correct CRC", async (t) => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-zip-"));
-  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+test("full ZIP contains actual UTF-8 sources, pinned lock, deployment, tests and correct CRC", async () => {
   const files = await assembleBundle(
     parseBundle(JSON.stringify(fullstackFixture())),
   );
-  const zip = path.join(dir, "project.zip");
-  await fs.writeFile(zip, zipFiles(files));
-  assert.match(
-    execFileSync("unzip", ["-t", zip], { encoding: "utf8" }),
-    /No errors/,
-  );
-  execFileSync("unzip", ["-q", zip, "-d", path.join(dir, "out")]);
+  const restored = await readVerifiedZip(zipFiles(files));
+  assert.deepEqual([...restored.keys()], files.map((file) => file.path));
   for (const f of files)
-    assert.equal(
-      await fs.readFile(path.join(dir, "out", f.path), "utf8"),
-      f.content,
-    );
+    assert.equal(restored.get(f.path), f.content);
   for (const name of [
     "server/app.mjs",
     "src/main.jsx",
@@ -380,7 +371,7 @@ test("engineering history is bounded and templates retain delivery type", async 
   const db = openDatabase(dir);
   t.after(async () => {
     db.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   for (let i = 0; i < 40; i++)
     db.saveBuild({

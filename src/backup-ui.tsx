@@ -3,6 +3,7 @@ import { Archive, Download, Upload, ShieldCheck } from "lucide-react";
 import { useApp } from "./context";
 import { Modal } from "./components";
 import { api, downloadBytes } from "./store";
+import { StorageStatusPanel } from "./storage-ui";
 type Preview = {
   token: string;
   expiresAt: number;
@@ -95,6 +96,7 @@ export function FullBackupPanel() {
         Key、已配对设备授权、外部部署的网站数据。备份中含私人资料和源码，请勿上传公开仓库。恢复前自动保留当前完整备份；恢复的工程需要重新验证，AI
         执行保持停止。
       </p>
+      <StorageStatusPanel disabled={!!busy} onPruned={() => setPreview(null)} />
       {!session.local ? (
         <p className="alert">
           完整备份与恢复仅在电脑本机地址操作；手机可继续使用业务数据导出。

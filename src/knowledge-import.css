@@ -1,0 +1,16 @@
+.knowledge-import-body { display: grid; gap: 16px; }
+.knowledge-import-list { display: grid; gap: 12px; }
+.knowledge-import-item { border: 1px solid var(--border, #e5e6ec); padding: 16px; border-radius: 14px; min-width: 0; }
+.knowledge-import-item.invalid { background: #fff5f3; }
+.knowledge-import-item p { font-size: 13px; line-height: 1.6; margin: 8px 0; }
+.knowledge-import-file { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+.knowledge-import-file strong { overflow-wrap: anywhere; }
+.knowledge-import-file span, .knowledge-import-item small { font-size: 12px; color: #747785; }
+.knowledge-import-item .field { margin-top: 12px; }
+.knowledge-import-item summary { cursor: pointer; padding-top: 12px; font-size: 13px; }
+.knowledge-import-item pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; background: #f7f8fa; padding: 12px; font-size: 12px; }
+.knowledge-import-footer { gap: 12px; flex-wrap: wrap; }
+.knowledge-import-footer > span { font-size: 12px; color: #747785; }
+.knowledge-import-footer .inline-controls { flex-wrap: wrap; }
+.knowledge-source { display: block; font-size: 11px; line-height: 1.5; color: #747785; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .knowledge-import-footer .inline-controls { width: 100%; } .knowledge-import-item { padding: 12px; } }

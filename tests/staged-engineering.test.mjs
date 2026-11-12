@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
 import { decodeFullBackup, backupDigest } from "../server/full-backup.mjs";
 import { fullstackFixture } from "./fixtures/fullstack.mjs";
 import { stagedResponse } from "./fixtures/staged.mjs";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn) {
@@ -55,7 +57,7 @@ async function fixture(t) {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   const boot = async () => {
     app = createApp({
       shared: true,
@@ -66,7 +68,7 @@ async function fixture(t) {
       },
     });
     server = app.listen(0, "127.0.0.1");
-    await new Promise((r) => server.once("listening", r));
+    await waitForHttp(server);
     base = `http://127.0.0.1:${server.address().port}`;
   };
   const stop = async () => {
@@ -133,7 +135,7 @@ async function fixture(t) {
     await stop();
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(r));
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   return {
     dir,

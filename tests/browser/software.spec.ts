@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,13 @@ import { createApp } from "../../server/index.mjs";
 import { seedWorkspace } from "../../src/domain";
 import { fullstackFixture } from "../fixtures/fullstack.mjs";
 import { stagedResponse } from "../fixtures/staged.mjs";
-import { validateProject } from "../../server/project-sandbox.mjs";
+import { validateProject, sandboxAvailable } from "../../server/project-sandbox.mjs";
+import { removeTestDirectory } from "../helpers/filesystem.mjs";
+import { readVerifiedZip } from "../helpers/zip.mjs";
+const realBuild = process.env.ARK_REAL_BROWSER_BUILD === "1";
+// Each real validator can use its full 120-second isolation budget plus
+// environment probes and cleanup. Mock-mode deadlines remain unchanged.
+const validationTimeout = realBuild ? 150000 : 60000;
 let dir: string,
   server: Server,
   upstream: Server,
@@ -31,6 +38,7 @@ const req = async (
   return r.json();
 };
 test.beforeEach(async () => {
+  if (realBuild) test.setTimeout(360000);
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "ark-software-browser-"));
   hold = false;
   holdStage = "";
@@ -55,13 +63,15 @@ test.beforeEach(async () => {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   app = createApp({
     shared: true,
     configPath: path.join(dir, "ai-config.json"),
     softwareOptions: {
-      capability: async () => ({ available: true, reason: "测试环境" }),
-      validator: process.env.ARK_REAL_BROWSER_BUILD
+      capability: realBuild
+        ? sandboxAvailable
+        : async () => ({ available: true, reason: "测试环境" }),
+      validator: realBuild
         ? validateProject
         : async () => ({
             passed: true,
@@ -78,7 +88,7 @@ test.beforeEach(async () => {
     },
   });
   server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const s = seedWorkspace();
   s.projects = [
@@ -101,13 +111,12 @@ test.beforeEach(async () => {
   });
 });
 test.afterEach(async () => {
-  app.locals.close();
+  await app.locals.close();
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
   upstream.closeAllConnections();
   await new Promise((r) => upstream.close(r));
-  await new Promise((r) => setTimeout(r, 50));
-  await fs.rm(dir, { recursive: true, force: true });
+  await removeTestDirectory(dir);
 });
 async function panel(page: Page) {
   await page.goto(base + "/#projects");
@@ -125,12 +134,12 @@ async function start(page: Page) {
 test("website project opens engineering; delivers source tree, ZIP, validation and mobile layout", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(realBuild ? 210000 : 90000);
   await panel(page);
   await start(page);
   await expect(page.locator(".software-heading")).toContainText(
     "构建与冒烟通过",
-    { timeout: 60000 },
+    { timeout: validationTimeout },
   );
   expect(calls).toBe(5);
   await page
@@ -143,11 +152,18 @@ test("website project opens engineering; delivers source tree, ZIP, validation a
     .click();
   const file = await (await downloading).path();
   const content = await fs.readFile(file!);
-  expect(content.readUInt32LE(0)).toBe(0x04034b50);
-  expect(content.includes(Buffer.from("Dockerfile"))).toBeTruthy();
-  expect(
-    content.includes(Buffer.from("verification-report.json")),
-  ).toBeTruthy();
+  const files = await readVerifiedZip(content);
+  expect(files.get("Dockerfile")).toContain("FROM");
+  expect(files.get("server/app.mjs")).toContain("DatabaseSync");
+  const report = JSON.parse(files.get("verification-report.json")!);
+  expect(report.validation.passed).toBe(true);
+  if (realBuild) {
+    expect(report.validation.verificationVersion).toBe(2);
+    expect(report.validation.checks.some((check: { name: string; passed: boolean }) =>
+      check.name.includes("重启") && check.passed)).toBe(true);
+    expect(report.validation.checks.some((check: { name: string; passed: boolean }) =>
+      check.name.includes("无缓存读回") && check.passed)).toBe(true);
+  }
   await page.locator(".software-workspace").scrollIntoViewIfNeeded();
   await page.screenshot({
     path: "artifacts/v32-engineering-desktop.png",
@@ -204,13 +220,13 @@ test("revisions retain selected history and stale requirement warning", async ({
   const first = await req(`/software/${id}/start`, body);
   await expect
     .poll(async () => (await req(`/software-builds/${first.id}`)).status, {
-      timeout: 60000,
+      timeout: validationTimeout,
     })
     .toBe("verified");
   const second = await req(`/software/${id}/start`, body);
   await expect
     .poll(async () => (await req(`/software-builds/${second.id}`)).status, {
-      timeout: 60000,
+      timeout: validationTimeout,
     })
     .toBe("verified");
   await panel(page);
@@ -278,7 +294,7 @@ test("new website goal selects engineering and requires confirmation before gene
   ).toBeVisible();
   await expect(page.locator(".software-heading")).toContainText(
     "构建与冒烟通过",
-    { timeout: 60000 },
+    { timeout: validationTimeout },
   );
   expect(calls).toBe(5);
   expect((await req("/workspace")).state.projects[0].deliveryType).toBe(
@@ -289,7 +305,7 @@ test("new website goal selects engineering and requires confirmation before gene
 test("revalidate needs no API key, keeps history and makes zero additional model calls", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(realBuild ? 360000 : 90000);
   const original = await req(`/software/${id}/start`, {
     confirmed: true,
     allowSandbox: true,
@@ -298,7 +314,7 @@ test("revalidate needs no API key, keeps history and makes zero additional model
   });
   await expect
     .poll(async () => (await req(`/software-builds/${original.id}`)).status, {
-      timeout: 60000,
+      timeout: validationTimeout,
     })
     .toBe("verified");
   await fs.writeFile(
@@ -330,7 +346,7 @@ test("revalidate needs no API key, keeps history and makes zero additional model
   await expect(page.locator(".software-lineage")).toContainText("没有调用模型");
   await expect(page.locator(".software-heading")).toContainText(
     "构建与冒烟通过",
-    { timeout: 60000 },
+    { timeout: validationTimeout },
   );
   const records = (await req(`/software/${id}`)).builds;
   expect(records).toHaveLength(2);
@@ -354,7 +370,7 @@ test("revalidate needs no API key, keeps history and makes zero additional model
 test("generation uses the selected base or deliberately starts fresh", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(realBuild ? 510000 : 90000);
   const original = await req(`/software/${id}/start`, {
     confirmed: true,
     allowSandbox: true,
@@ -363,7 +379,7 @@ test("generation uses the selected base or deliberately starts fresh", async ({
   });
   await expect
     .poll(async () => (await req(`/software-builds/${original.id}`)).status, {
-      timeout: 60000,
+      timeout: validationTimeout,
     })
     .toBe("verified");
   await panel(page);
@@ -378,7 +394,7 @@ test("generation uses the selected base or deliberately starts fresh", async ({
         const b = (await req(`/software/${id}`)).builds[0];
         return b.id !== original.id && b.status === "verified";
       },
-      { timeout: 60000 },
+      { timeout: validationTimeout },
     )
     .toBeTruthy();
   expect((await req(`/software/${id}`)).builds[0].baseBuildId).toBe(
@@ -396,7 +412,7 @@ test("generation uses the selected base or deliberately starts fresh", async ({
         const rows = (await req(`/software/${id}`)).builds;
         return rows.length === 3 && rows[0].status === "verified";
       },
-      { timeout: 60000 },
+      { timeout: validationTimeout },
     )
     .toBeTruthy();
   expect((await req(`/software/${id}`)).builds[0].baseBuildId).toBeNull();
@@ -406,7 +422,7 @@ test("generation uses the selected base or deliberately starts fresh", async ({
 test("staged mobile recovery keeps backend checkpoint and explicit human acceptance", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(realBuild ? 210000 : 90000);
   holdStage = "frontend";
   await panel(page);
   await expect(page.getByLabel("工程执行方式")).toHaveValue("staged");
@@ -446,7 +462,7 @@ test("staged mobile recovery keeps backend checkpoint and explicit human accepta
   await page.getByRole("button", { name: "从检查点继续" }).click();
   await expect(page.locator(".software-heading")).toContainText(
     "构建与冒烟通过",
-    { timeout: 60000 },
+    { timeout: validationTimeout },
   );
   expect(calls).toBe(6);
   await expect(
@@ -484,7 +500,7 @@ test("staged mobile recovery keeps backend checkpoint and explicit human accepta
 test("mobile recommendation keeps the newer source baseline after an old version is revalidated", async ({
   page,
 }) => {
-  test.setTimeout(120000);
+  test.setTimeout(realBuild ? 660000 : 120000);
   const create = async () => {
     const b = await req(`/software/${id}/start`, {
       confirmed: true,
@@ -494,7 +510,7 @@ test("mobile recommendation keeps the newer source baseline after an old version
     });
     await expect
       .poll(async () => (await req(`/software-builds/${b.id}`)).status, {
-        timeout: 60000,
+        timeout: validationTimeout,
       })
       .toBe("verified");
     return b;
@@ -511,7 +527,7 @@ test("mobile recommendation keeps the newer source baseline after an old version
   });
   await expect
     .poll(async () => (await req(`/software-builds/${recheck.id}`)).status, {
-      timeout: 60000,
+      timeout: validationTimeout,
     })
     .toBe("verified");
   expect((await req(`/software/${id}`)).recommendedBuildId).toBe(newer.id);
@@ -538,7 +554,7 @@ test("mobile recommendation keeps the newer source baseline after an old version
           b.baseBuildId === newer.id
         );
       },
-      { timeout: 60000 },
+      { timeout: validationTimeout },
     )
     .toBe(true);
   await expect(page.locator(".software-heading")).toContainText(

@@ -24,6 +24,9 @@ import { MobileConnection, BackupPanel } from "./connectivity";
 const FullBackupPanel = lazy(() =>
   import("./backup-ui").then((m) => ({ default: m.FullBackupPanel })),
 );
+const EnvironmentPanel = lazy(() =>
+  import("./environment-ui").then((m) => ({ default: m.EnvironmentPanel })),
+);
 
 const providers = [
   {
@@ -176,6 +179,11 @@ export function SettingsPage() {
               </div>
             </form>
           </section>
+          <Suspense
+            fallback={<p className="field-hint">正在加载工程环境检查…</p>}
+          >
+            <EnvironmentPanel />
+          </Suspense>
           <section className="panel settings-section">
             <div className="settings-title">
               <span className="settings-icon purple">

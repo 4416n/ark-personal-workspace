@@ -34,6 +34,7 @@ import { SettingsPage } from "./settings";
 import { Dialogs } from "./dialogs";
 import { ConnectionGate } from "./connectivity";
 import { RunsPage } from "./runs-ui";
+import { version } from "../package.json";
 
 const nav = [
   { id: "dashboard", label: "办公室", icon: Building2 },
@@ -427,7 +428,7 @@ export default function App() {
             </span>
             <span>
               你来决策，团队来协作。
-              <span className="footer-brand">BOSS WORKSPACE 3.3.1</span>
+              <span className="footer-brand">BOSS WORKSPACE {version}</span>
             </span>
           </footer>
         </div>

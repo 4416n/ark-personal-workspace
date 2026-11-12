@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -5,6 +6,7 @@ import os from "node:os";
 import http, { type Server } from "node:http";
 import { createApp } from "../../server/index.mjs";
 import { seedWorkspace } from "../../src/domain";
+import { removeTestDirectory } from "../helpers/filesystem.mjs";
 
 let directory: string,
   server: Server,
@@ -81,13 +83,13 @@ test.beforeEach(async () => {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   app = createApp({
     shared: true,
     configPath: path.join(directory, "ai-config.json"),
   });
   server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const s = seedWorkspace();
   s.projects = [
@@ -125,10 +127,10 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
-  app.locals.close();
+  await app.locals.close();
   upstream.closeAllConnections();
   await new Promise((r) => upstream.close(r));
-  await fs.rm(directory, { recursive: true, force: true });
+  await removeTestDirectory(directory);
 });
 
 test("一键自动交付审查、进度同步、交付包导出与手机可读", async ({ page }) => {

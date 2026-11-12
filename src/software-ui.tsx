@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { useApp } from "./context";
 import { api } from "./store";
+import { EnvironmentChecks, type EnvironmentStatus } from "./environment-ui";
+import { PreviewPanel } from "./preview-ui";
 import {
   EngineeringProgress,
   type Pipeline,
@@ -99,11 +101,29 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
   const [extraAttempts, setExtraAttempts] = useState(0);
   const [baseChoice, setBaseChoice] = useState("recommended");
   const [loaded, setLoaded] = useState(false);
-  const [cap, setCap] = useState<{ available: boolean; reason: string } | null>(
-    null,
-  );
+  const [cap, setCap] = useState<EnvironmentStatus | null>(null);
+  const [capBusy, setCapBusy] = useState(false);
+  const [capError, setCapError] = useState("");
   const alive = useRef(true);
+  const capChecking = useRef(false);
   const loadSequence = useRef(0);
+  const inspectEnvironment = async (refresh = false) => {
+    if (capChecking.current) return;
+    capChecking.current = true;
+    setCapBusy(true);
+    setCapError("");
+    try {
+      const result = await api<EnvironmentStatus>(
+        `/software-capabilities${refresh ? "?refresh=1" : ""}`,
+      );
+      if (alive.current) setCap(result);
+    } catch (e) {
+      if (alive.current) setCapError((e as Error).message);
+    } finally {
+      capChecking.current = false;
+      if (alive.current) setCapBusy(false);
+    }
+  };
   const load = async () => {
     const sequence = ++loadSequence.current;
     const next = await api<BuildList>(`/software/${projectId}`);
@@ -131,14 +151,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
       }
     };
     void poll();
-    if (session?.shared)
-      void api<{ available: boolean; reason: string }>("/software-capabilities")
-        .then((c) => {
-          if (alive.current) setCap(c);
-        })
-        .catch((e) => {
-          if (alive.current) setError(e.message);
-        });
+    if (session?.shared) void inspectEnvironment();
     const timer = setInterval(() => void poll(), 1800);
     return () => {
       alive.current = false;
@@ -391,9 +404,29 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
             ? cap.available
               ? "隔离环境就绪"
               : "不可用，只能交付未验证源码"
-            : "正在检测"}
+            : capError
+              ? "检测失败，可重试"
+              : "正在检测"}
         </summary>
         <p>{cap?.reason || "正在检查，不会在宿主机直接执行生成的代码。"}</p>
+        <button
+          className="button"
+          disabled={capBusy}
+          onClick={() => void inspectEnvironment(true)}
+        >
+          <RotateCw size={15} />
+          {capBusy ? "正在检查环境…" : "重新检查环境"}
+        </button>
+        {capError && (
+          <p className="alert error" role="alert">
+            {capError}
+          </p>
+        )}
+        {cap && <EnvironmentChecks status={cap} />}
+        <p>
+          环境检查不调用 AI；5
+          秒内复用最近结果。环境就绪后仍需完成实际工程验证。
+        </p>
         <p>
           生成 → 实际构建与测试 → 失败自动修复 → 保存版本。普通历史每项目最近 5
           版、全局最近 30
@@ -818,6 +851,20 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
                 启动。
               </figcaption>
             </figure>
+          )}
+          {!!build.files.length && (
+            <PreviewPanel
+              key={build.id}
+              buildId={build.id}
+              sourceHash={build.sourceHash}
+              available={cap?.available === true}
+              eligible={
+                build.status === "verified" &&
+                build.validation?.passed === true &&
+                !build.legacyVerification &&
+                !build.stale
+              }
+            />
           )}
           {!!build.files.length && (
             <details className="software-environment">

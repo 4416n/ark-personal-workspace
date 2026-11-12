@@ -1,3 +1,4 @@
+import { waitForHttp } from "./helpers/http.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -11,6 +12,7 @@ import { parseReview } from "../server/work-output.mjs";
 import { deliveryMarkdown } from "../shared/contract.mjs";
 import { recordReview, replaceResult } from "../src/delivery.ts";
 import { projectToTemplate, instantiateTemplate } from "../src/templates.ts";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
 
 async function until(fn) {
   const end = Date.now() + 8000;
@@ -72,7 +74,7 @@ async function fixture(t, count = 2) {
       );
     })
     .listen(0, "127.0.0.1");
-  await new Promise((r) => upstream.once("listening", r));
+  await waitForHttp(upstream);
   let app, server, base;
   async function boot() {
     app = createApp({
@@ -80,7 +82,7 @@ async function fixture(t, count = 2) {
       configPath: path.join(dir, "ai-config.json"),
     });
     server = app.listen(0, "127.0.0.1");
-    await new Promise((r) => server.once("listening", r));
+    await waitForHttp(server);
     base = `http://127.0.0.1:${server.address().port}`;
   }
   await boot();
@@ -138,13 +140,13 @@ async function fixture(t, count = 2) {
   async function shutdown() {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
-    app.locals.close();
+    await app.locals.close();
   }
   t.after(async () => {
     await shutdown();
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(r));
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   return {
     dir,
@@ -426,7 +428,7 @@ test("独立每日备份失败不将已经提交的数据库保存误报为失�
   const db = openDatabase(dir);
   t.after(async () => {
     db.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   await fs.writeFile(path.join(dir, "daily-backups"), "simulate occupied path");
   const saved = db.save(seedWorkspace(), 0);
@@ -467,7 +469,7 @@ test("系统时钟回拨时最新备份、执行记录排序及保留顺序仍�
   t.after(async () => {
     t.mock.timers.reset();
     db.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2030, 0, 1) });
   const first = seedWorkspace();

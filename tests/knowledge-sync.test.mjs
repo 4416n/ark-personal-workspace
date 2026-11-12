@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { syncDeliveredKnowledge } from "../shared/knowledge-sync.mjs";
 import { stateSchema, seedWorkspace } from "../src/domain.ts";
+import { removeTestDirectory } from "./helpers/filesystem.mjs";
 
 test("完成成果写入知识库，重开后只移除镜像", () => {
   const state = {
@@ -101,7 +102,7 @@ test("数据库保存统一生成镜像，读取不改版本，重开清理镜�
   const db = openDatabase(dir);
   t.after(async () => {
     db.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTestDirectory(dir);
   });
   const state = seedWorkspace();
   const manual = {

@@ -1,3 +1,4 @@
+import { waitForHttp } from "../helpers/http.mjs";
 import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -10,6 +11,7 @@ import { seedWorkspace } from "../../src/domain";
 import { assembleBundle, sourceHash } from "../../server/project-bundle.mjs";
 import { requirements, requirementsHash } from "../../server/requirements.mjs";
 import { fullstackFixture } from "../fixtures/fullstack.mjs";
+import { removeTestDirectory } from "../helpers/filesystem.mjs";
 let dir: string,
   base: string,
   server: Server,
@@ -61,14 +63,14 @@ test.beforeEach(async () => {
     configPath: path.join(dir, "ai-config.json"),
   });
   server = app.listen(0, "127.0.0.1");
-  await new Promise((r) => server.once("listening", r));
+  await waitForHttp(server);
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 test.afterEach(async () => {
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
   await app.locals.close();
-  await fs.rm(dir, { recursive: true, force: true });
+  await removeTestDirectory(dir);
 });
 for (const width of [1440, 390]) {
   test(`完整备份下载、预览、取消和确认恢复，工程标明待重验 (${width}px)`, async ({
@@ -120,9 +122,17 @@ for (const width of [1440, 390]) {
       page.getByRole("dialog", { name: "核对完整备份" }),
     ).toBeVisible();
     page.once("dialog", (d) => d.accept());
+    // Workspace reads return 423 while the pre-restore backup is being written.
+    // Wait for the restore request itself before inspecting the restored state.
+    const restoreResponse = page.waitForResponse(
+      (response) =>
+        response.url() === base + "/api/full-backup/restore" &&
+        response.request().method() === "POST",
+    );
     await page
       .getByRole("button", { name: "备份当前数据并恢复", exact: true })
       .click();
+    expect((await restoreResponse).ok()).toBe(true);
     await expect
       .poll(async () => (await snapshot()).state.profile.name)
       .toBe("备份前的我");
@@ -173,4 +183,72 @@ test("完整备份上传损坏文件后清晰报错，不影响现有数据", as
   await expect(page.getByRole("alert")).toContainText("备份无法解压");
   expect(await snapshot()).toEqual(before);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("备份容量展示并重新核对旧快照，取消不整理，确认提交最新版本", async ({ page }) => {
+  const mib = 1024 * 1024;
+  const response = await fetch(base + "/api/storage-status");
+  expect(response.ok).toBe(true);
+  const current = await response.json();
+  let revision = 7;
+  const status = () => ({
+    ...current,
+    revision,
+    tables: {
+      ...current.tables,
+      snapshots: { count: 3, bytes: 30 * mib },
+    },
+    fullBackup: {
+      ...current.fullBackup,
+      logicalBytes: 33 * mib,
+    },
+    snapshots: {
+      ...current.snapshots,
+      retainedCount: 2,
+      retainedBytes: 20 * mib,
+      prunableCount: 1,
+      prunableBytes: 10 * mib,
+    },
+  });
+  const requests: unknown[] = [];
+  await page.route("**/api/storage-status", (route) => route.fulfill({ json: status() }));
+  await page.route("**/api/snapshots/prune", (route) => {
+    requests.push(route.request().postDataJSON());
+    const next = status();
+    next.tables.snapshots = { count: 2, bytes: 20 * mib };
+    next.fullBackup.logicalBytes = 23 * mib;
+    next.snapshots.prunableCount = 0;
+    next.snapshots.prunableBytes = 0;
+    return route.fulfill({
+      json: { ok: true, removedCount: 1, removedBytes: 10 * mib, status: next },
+    });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(base + "/#settings");
+  const capacity = page.getByRole("region", { name: "备份容量", exact: true });
+  await expect(capacity).toContainText("33.0 MiB");
+  await expect(capacity).toContainText("当前 3 份快照");
+  expect(requests).toHaveLength(0);
+  await capacity.getByRole("button", { name: "整理旧快照", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "整理旧快照", exact: true });
+  await expect(confirmation).toContainText("保留最近 2 份");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  expect(requests).toHaveLength(0);
+
+  // A changed revision must be fetched for the new confirmation, not reused
+  // from the initial capacity display or the cancelled dialog.
+  revision = 8;
+  await capacity.getByRole("button", { name: "整理旧快照", exact: true }).click();
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "确认整理", exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  expect(requests).toEqual([{
+    confirmed: true,
+    revision: 8,
+    snapshotFingerprint: current.snapshots.fingerprint,
+  }]);
+  await expect(capacity).toContainText("已整理 1 份旧快照");
+  await expect(capacity).toContainText("23.0 MiB");
+  await expect(capacity.getByRole("button", { name: "整理旧快照", exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
