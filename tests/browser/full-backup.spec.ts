@@ -122,9 +122,17 @@ for (const width of [1440, 390]) {
       page.getByRole("dialog", { name: "核对完整备份" }),
     ).toBeVisible();
     page.once("dialog", (d) => d.accept());
+    // Workspace reads return 423 while the pre-restore backup is being written.
+    // Wait for the restore request itself before inspecting the restored state.
+    const restoreResponse = page.waitForResponse(
+      (response) =>
+        response.url() === base + "/api/full-backup/restore" &&
+        response.request().method() === "POST",
+    );
     await page
       .getByRole("button", { name: "备份当前数据并恢复", exact: true })
       .click();
+    expect((await restoreResponse).ok()).toBe(true);
     await expect
       .poll(async () => (await snapshot()).state.profile.name)
       .toBe("备份前的我");
