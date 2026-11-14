@@ -268,6 +268,7 @@ export type Page =
   | "decisions"
   | "analytics"
   | "runs"
+  | "autopilot"
   | "settings";
 export type AiConfig = {
   baseUrl: string;

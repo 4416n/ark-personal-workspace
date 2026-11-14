@@ -295,8 +295,7 @@ export function SettingsPage() {
                       </button>
                     </div>
                     <small>
-                      密钥仅保存在本机
-                      .local/ai-config.json，不写入浏览器存储或数据导出文件。
+                      {session?.remote ? "密钥仅保存在服务器数据目录的 ai-config.json" : "密钥仅保存在本机 .local/ai-config.json"}，不写入浏览器存储或数据导出文件。
                     </small>
                   </label>
                 </div>
@@ -379,7 +378,7 @@ export function SettingsPage() {
                 <h2>数据与备份</h2>
                 <p>
                   {session?.shared
-                    ? "数据保存在电脑，手机和电脑共享；也可导出独立文件留存。"
+                    ? `数据保存在${session.remote ? "服务器" : "电脑"}，手机和电脑共享；也可导出独立文件留存。`
                     : "数据保存在当前浏览器，定期备份，让进展安心留存。"}
                 </p>
               </div>
@@ -545,13 +544,13 @@ export function SettingsPage() {
           </div>
           <div className="local-note">
             <ShieldCheck size={21} />
-            <h4>属于你的本地空间</h4>
+            <h4>{session?.remote ? "属于你的私人工作台" : "属于你的本地空间"}</h4>
             <p>
               基础管理和离线规划无需 API Key。只有主动使用 AI
               功能时，相关目标与资料才会发给你配置的服务。
             </p>
             <p>
-              共享模式下，不同设备读取电脑上的同一份数据；视图偏好仍分别保存在各自浏览器。
+              共享模式下，不同设备读取{session?.remote ? "服务器" : "电脑"}上的同一份数据；视图偏好仍分别保存在各自浏览器。
             </p>
           </div>
         </aside>

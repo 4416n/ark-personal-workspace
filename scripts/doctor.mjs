@@ -20,6 +20,9 @@ export async function doctor(args = []) {
   console.log("\n方舟启动自检（只检查，不修改文件、不调用模型）\n");
   for (const check of checks) console.log(`${check.ok ? "[就绪]" : "[待处理]"} ${check.name}：${check.detail}`);
   console.log(`\n访问方式：${options.lan ? "可信局域网，手机需配对" : "仅本机；加 --lan 可启用手机连接"}`);
+  const { dockerRuntime } = await import("../server/docker-runtime.mjs");
+  const automatic = await dockerRuntime().capability();
+  console.log(`\n全自动开发与部署：${automatic.available ? "可用" : "待配置"} · ${automatic.reason}`);
   if (state && !state.installNeeded && Number(process.versions.node.split(".")[0]) >= 24) {
     const { diagnoseSandbox } = await import(pathToFileURL(path.join(projectRoot, "server", "project-sandbox.mjs")).href);
     const report = await diagnoseSandbox();

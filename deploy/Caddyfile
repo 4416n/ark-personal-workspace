@@ -1,0 +1,6 @@
+{$ARK_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy workspace:5173 {
+        header_up Host {host}
+    }
+}

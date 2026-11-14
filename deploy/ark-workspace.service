@@ -1,0 +1,24 @@
+[Unit]
+Description=ARK personal workspace
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ark
+Group=ark
+WorkingDirectory=/opt/ark-personal-workspace
+EnvironmentFile=/etc/ark-workspace.env
+ExecStart=/usr/bin/node /opt/ark-personal-workspace/server/index.mjs --production
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ark-workspace
+
+[Install]
+WantedBy=multi-user.target

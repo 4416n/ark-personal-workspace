@@ -16,6 +16,11 @@ import { generationMessages } from "./work-output.mjs";
 import { stateSchema } from "../src/domain.ts";
 import { reviewBasis } from "../shared/contract.mjs";
 import { previewApi } from "./preview-api.mjs";
+import { deploymentConfig, securityHeaders } from "./deployment.mjs";
+import { dockerRuntime } from "./docker-runtime.mjs";
+import { releaseManager } from "./release-manager.mjs";
+import { autopilot } from "./autopilot.mjs";
+import { caddyPublisher } from "./autopilot-publisher.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaults = {
@@ -70,16 +75,25 @@ export function createApp({
   dataDir = path.dirname(configPath),
   softwareOptions = {},
   previewOptions = {},
+  deployment = {},
+  autopilotOptions = {},
 } = {}) {
+  const remote = deploymentConfig(deployment);
+  if (remote && (!shared || lan))
+    throw new Error("远程部署需要共享数据库模式，且不能同时启用局域网配对");
   const app = express();
   app.disable("x-powered-by");
+  app.use(securityHeaders(remote));
   const database = shared ? openDatabase(dataDir) : null;
   const access = accessControl({
     lan,
     shared,
     initialized: () => !!database?.read().state,
+    remote,
   });
   const runs = executionLog(database);
+  const runtime = autopilotOptions.runtime || dockerRuntime();
+  const releases = releaseManager({ directory: dataDir, runtime, publisher: caddyPublisher(), firstPort: Number(process.env.ARK_RELEASE_PORT || 8800), publicUrl: process.env.ARK_RELEASE_URL, ...autopilotOptions.releaseOptions });
   const automation = projectAutomation({
     database,
     runs,
@@ -94,18 +108,31 @@ export function createApp({
     readConfig,
     isDocumentActive: () =>
       automation.active().length > 0 || !!previews.active(),
+    automaticValidator: (...args) => runtime.validate(...args),
     ...softwareOptions,
   });
+  let recoveryError = "", recovering = true;
+  const auto = autopilot({ database, software, runs, completion, readConfig, runtime, releases, directory: dataDir, externalBusy: () => recovering || !!recoveryError || automation.active().length > 0 || !!previews.active(), ...autopilotOptions.jobOptions });
+  const recoverReleases = () => releases.recover().then(() => { recoveryError = ""; }).catch((error) => { recoveryError = error.message; }).finally(() => { recovering = false; });
+  let releaseRecovery = recoverReleases();
+  const recoveryTimer = setInterval(() => {
+    if (!recoveryError || recovering) return;
+    recovering = true;
+    releaseRecovery = recoverReleases();
+  }, autopilotOptions.recoveryMs || 15000);
+  recoveryTimer.unref?.();
   let closePromise;
   app.locals.close = () => {
     if (closePromise) return closePromise;
+    clearInterval(recoveryTimer);
     backups.close();
+    const stoppedAuto = auto.close();
     const stopped = software.close();
+    releases.close();
     const stoppedPreviews = previews.close();
     automation.close();
     runs.close();
-    database?.close();
-    closePromise = Promise.all([stopped, stoppedPreviews]);
+    closePromise = Promise.all([stopped, stoppedPreviews, stoppedAuto, releaseRecovery]).finally(() => database?.close());
     return closePromise;
   };
   app.use("/api", access.guard);
@@ -119,14 +146,30 @@ export function createApp({
       !software.active() &&
       !previews.active() &&
       !automation.active().length &&
+      !auto.active() && !releases.active() &&
       !runs.list().some((r) => r.status === "running"),
     afterRestore: () => automation.reload(),
   });
   const previews = previewApi(app, {
     database,
     access,
-    idle: () => !software.active() && !automation.active().length,
+    idle: () => !software.active() && !automation.active().length && !auto.active(),
     ...previewOptions,
+  });
+  app.get("/api/autopilot", (_req, res) => res.json({ jobs: auto.list(), releases: releases.list() }));
+  app.get("/api/autopilot/capabilities", asyncRoute(async (_req, res) => res.json({ ...await runtime.capability(), recoveryError })));
+  app.post("/api/autopilot/start", access.localOnly, asyncRoute(async (req, res) => {
+    await releaseRecovery;
+    if (recoveryError) throw Object.assign(new Error(`部署恢复失败：${recoveryError}`), { status: 503 });
+    res.json(await auto.start(req.body));
+  }));
+  app.post("/api/autopilot/:id/stop", access.localOnly, (req, res) => res.json(auto.stop(req.params.id)));
+  app.post("/api/releases/:projectId/rollback", access.localOnly, asyncRoute(async (req, res) => res.json(await releases.rollback(req.params.projectId))));
+  app.use("/api", (req, res, next) => {
+    if (auto.active() && req.method === "POST" && (
+      /^\/software(?:-builds)?\//.test(req.path) || /^\/automation\/.*\/(?:start|resume)$/.test(req.path)))
+      return res.status(409).json({ error: "全自动任务正在运行，请先停止后再手动执行工程或文档任务" });
+    next();
   });
   app.get("/api/workspace", (req, res) => {
     const current = database?.read() || { state: null, revision: 0 };
@@ -151,6 +194,7 @@ export function createApp({
       // Compare-and-swap must win over a lock error, so stale clients merge first.
       if (revision !== current.revision)
         return res.status(409).json({ error: "工作台已更新，请合并后保存" });
+      auto.guardWrite(next);
       automation.guardWrite(next);
       software.guardWrite(next);
       previews.guardWrite(next);
@@ -699,9 +743,14 @@ export function createApp({
             : err.message || "本地服务发生错误。",
     });
   });
-  app.use(express.static(path.join(root, "dist")));
+  app.use(express.static(path.join(root, "dist"), {
+    setHeaders(res, file) {
+      res.setHeader("Cache-Control", file.includes(`${path.sep}assets${path.sep}`)
+        ? "public, max-age=31536000, immutable" : "no-cache");
+    },
+  }));
   app.get("/{*path}", (_req, res) =>
-    res.sendFile(path.join(root, "dist", "index.html")),
+    res.set("Cache-Control", "no-cache").sendFile(path.join(root, "dist", "index.html")),
   );
   return app;
 }
@@ -713,9 +762,16 @@ if (
     Number(process.env.PORT) ||
     (process.argv.includes("--production") ? 5173 : 3001);
   const lan = process.argv.includes("--lan");
+  let passwordHash = process.env.ARK_PASSWORD_HASH;
+  if (process.env.ARK_PASSWORD_HASH_FILE) {
+    if (passwordHash) throw new Error("密码哈希只能选择环境变量或文件中的一种");
+    passwordHash = (await fs.readFile(process.env.ARK_PASSWORD_HASH_FILE, "utf8")).trim();
+  }
+  const deployment = { publicOrigin: process.env.ARK_PUBLIC_ORIGIN, passwordHash };
   const app = createApp({
     shared: process.env.ARK_LEGACY !== "1",
     lan,
+    deployment,
     ...(process.env.ARK_DATA_DIR
       ? {
           dataDir: process.env.ARK_DATA_DIR,
@@ -723,8 +779,12 @@ if (
         }
       : {}),
   });
-  const server = app.listen(port, lan ? "0.0.0.0" : "127.0.0.1", () => {
+  const host = process.env.ARK_HOST || (lan ? "0.0.0.0" : "127.0.0.1");
+  if (!["127.0.0.1", "::1"].includes(host) && !lan && !deployment.publicOrigin)
+    throw new Error("非本机监听必须启用局域网配对或配置远程密码登录");
+  const server = app.listen(port, host, () => {
     console.log(`方舟工作台服务已启动：http://127.0.0.1:${port}`);
+    if (deployment.publicOrigin) console.log(`远程访问：${deployment.publicOrigin}（需要工作台密码）`);
     if (lan)
       for (const x of lanAddresses())
         console.log(`手机访问：http://${x.address}:${port}（需要连接码）`);

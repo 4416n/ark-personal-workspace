@@ -19,6 +19,7 @@ export type Session = {
   authenticated: boolean;
   initialized: boolean;
   lan: boolean;
+  remote?: boolean;
 };
 type Snapshot = { state: Workspace; revision: number };
 async function request(path: string, data?: unknown) {
@@ -58,6 +59,7 @@ export function useSyncedWorkspace() {
   const readyRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
+  const storageHost = () => sessionRef.current?.remote ? "服务器" : "电脑";
   const [status, setStatus] = useState("正在连接电脑…");
   const [storageError, setError] = useState("");
   const [conflict, setConflict] = useState<Snapshot | null>(null);
@@ -103,7 +105,7 @@ export function useSyncedWorkspace() {
     running.current = true;
     try {
       if (dirty.current) {
-        setStatus("正在保存到电脑…");
+        setStatus(`正在保存到${storageHost()}…`);
         const submitted = stateRef.current;
         try {
           const saved: Snapshot = await request("/workspace", {
@@ -118,7 +120,7 @@ export function useSyncedWorkspace() {
             )
               adopt(base.current.state);
             localStorage.removeItem(PENDING);
-            setStatus("已保存到电脑");
+            setStatus(`已保存到${storageHost()}`);
             setError("");
           } else cachePending();
         } catch (e) {
@@ -162,7 +164,7 @@ export function useSyncedWorkspace() {
           adopt(remote.state);
         }
         if (!dirty.current) {
-          setStatus("已保存到电脑");
+          setStatus(`已保存到${storageHost()}`);
           setError("");
         }
       }
@@ -171,7 +173,7 @@ export function useSyncedWorkspace() {
         [400, 413, 423].includes((error as { status?: number }).status || 0)
       ) {
         setError((error as Error).message);
-        setStatus("修改尚未保存到电脑，请检查内容或导出备份");
+        setStatus(`修改尚未保存到${storageHost()}，请检查内容或导出备份`);
         return;
       }
       if ((error as { status?: number }).status === 401) {
@@ -181,8 +183,8 @@ export function useSyncedWorkspace() {
       }
       setStatus(
         dirty.current
-          ? "电脑连接中断，修改暂存本机，重连后同步"
-          : "电脑连接中断，显示上次缓存",
+          ? `${storageHost()}连接中断，修改暂存本机，重连后同步`
+          : `${storageHost()}连接中断，显示上次缓存`,
       );
     } finally {
       running.current = false;
@@ -268,7 +270,7 @@ export function useSyncedWorkspace() {
             adopt(remote.state);
           }
           if (!conflictRef.current)
-            setStatus(dirty.current ? "正在同步暂存修改…" : "已保存到电脑");
+            setStatus(dirty.current ? "正在同步暂存修改…" : `已保存到${storageHost()}`);
         }
         if (alive) {
           readyRef.current = true;
@@ -313,7 +315,7 @@ export function useSyncedWorkspace() {
     if (sessionRef.current?.shared) {
       dirty.current = true;
       cachePending();
-      if (!conflictRef.current) setStatus("正在保存到电脑…");
+      if (!conflictRef.current) setStatus(`正在保存到${storageHost()}…`);
       void pumpRef.current();
     }
   };
@@ -345,7 +347,7 @@ export function useSyncedWorkspace() {
       }
       await new Promise((r) => setTimeout(r, 150));
     } while (Date.now() < until);
-    throw new Error("修改还未保存到电脑，请检查连接与保存状态后重试");
+    throw new Error(`修改还未保存到${storageHost()}，请检查连接与保存状态后重试`);
   };
   return {
     state,

@@ -1,0 +1,27 @@
+[Unit]
+Description=ARK automatic development and release controller
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ark
+Group=ark
+SupplementaryGroups=docker
+WorkingDirectory=/opt/ark-personal-workspace
+EnvironmentFile=/etc/ark-autopilot.env
+ExecStart=/usr/bin/node /opt/ark-personal-workspace/server/index.mjs --production
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ark-workspace
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ark-browsers
+
+[Install]
+WantedBy=multi-user.target

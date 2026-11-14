@@ -14,10 +14,13 @@
     "doctor": "node scripts/doctor.mjs",
     "launch": "node scripts/launch.mjs",
     "launch:lan": "node scripts/launch.mjs --lan",
+    "password": "node scripts/set-password.mjs",
+    "check": "npm run build && npm test && npm run test:e2e",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
     "test:sandbox": "node --test tests/sandbox.integration.mjs",
-    "test:preview": "node --test tests/preview.integration.mjs"
+    "test:preview": "node --test tests/preview.integration.mjs",
+    "test:autopilot": "node --test --test-concurrency=1 tests/autopilot.integration.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

@@ -8,6 +8,7 @@ import {
   Download,
   RefreshCw,
   LoaderCircle,
+  KeyRound,
 } from "lucide-react";
 import { api, download } from "./store";
 import { useApp } from "./context";
@@ -27,12 +28,13 @@ export function ConnectionGate({
   const [code, setCode] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const remote = !!session?.remote;
   const pair = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setMessage("");
     try {
-      await api("/pair", { code });
+      await api(remote ? "/auth/login" : "/pair", remote ? { password: code } : { code });
       location.reload();
     } catch (e) {
       setMessage((e as Error).message);
@@ -44,10 +46,10 @@ export function ConnectionGate({
     <div className="connection-gate">
       <section>
         <span className="connection-mark">
-          <Smartphone size={30} />
+          {remote ? <KeyRound size={30} /> : <Smartphone size={30} />}
         </span>
-        <h1>把工作台带到手机上</h1>
-        <p>连接电脑上的 BOSS 方舟，继续你的项目与灵感。</p>
+        <h1>{remote ? "登录你的工作台" : "把工作台带到手机上"}</h1>
+        <p>{remote ? "输入工作台密码，继续你的项目与交付。" : "连接电脑上的 BOSS 方舟，继续你的项目与灵感。"}</p>
         {error ? (
           <>
             <div className="alert error">{error}</div>
@@ -71,24 +73,25 @@ export function ConnectionGate({
         ) : (
           <form onSubmit={pair}>
             <label className="field">
-              电脑上的连接码
+              {remote ? "工作台密码" : "电脑上的连接码"}
               <input
                 autoFocus
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]{8}"
-                maxLength={8}
+                type={remote ? "password" : "text"}
+                inputMode={remote ? "text" : "numeric"}
+                autoComplete={remote ? "current-password" : "one-time-code"}
+                pattern={remote ? undefined : "[0-9]{8}"}
+                maxLength={remote ? 256 : 8}
                 required
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                placeholder="8 位数字"
+                onChange={(e) => setCode(remote ? e.target.value : e.target.value.replace(/\D/g, ""))}
+                placeholder={remote ? "输入工作台密码" : "8 位数字"}
               />
             </label>
             <button
               className="button primary"
-              disabled={busy || code.length !== 8}
+              disabled={busy || (remote ? !code : code.length !== 8)}
             >
-              {busy ? "正在连接…" : "连接我的工作台"}
+              {busy ? "正在连接…" : remote ? "登录工作台" : "连接我的工作台"}
             </button>
             {message && (
               <div role="alert" className="alert error">
@@ -96,14 +99,13 @@ export function ConnectionGate({
               </div>
             )}
             <small>
-              在电脑打开「工作台设置 →
-              手机连接」，生成一次性连接码。手机和电脑需在同一局域网。
+              {remote ? "密码由部署者设置。连续登录失败会暂时限制尝试，忘记密码请在服务器重新生成密码文件并重启服务。" : "在电脑打开「工作台设置 → 手机连接」，生成一次性连接码。手机和电脑需在同一局域网。"}
             </small>
           </form>
         )}
         <div className="connection-foot">
           <ShieldCheck size={15} />
-          资料保存在你的电脑上
+          {remote ? "资料保存在你部署的服务器上" : "资料保存在你的电脑上"}
         </div>
       </section>
     </div>
@@ -131,8 +133,8 @@ export function MobileConnection() {
       })
       .catch((e) => notify(e.message, true));
   useEffect(() => {
-    if (session?.local) void load();
-  }, [session?.local]);
+    if (session?.local && !session.remote) void load();
+  }, [session?.local, session?.remote]);
   useEffect(() => {
     let active = true;
     if (url)
@@ -156,6 +158,16 @@ export function MobileConnection() {
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [pair]);
+  if (session?.remote)
+    return (
+      <section className="panel settings-section">
+        <div className="settings-title">
+          <span className="settings-icon green"><ShieldCheck size={21} /></span>
+          <div><h2>远程工作台</h2><p>电脑和手机使用同一 HTTPS 地址，通过密码登录。</p></div>
+        </div>
+        <p>当前登录拥有工作台管理权限。数据保存在服务器，模型密钥不会返回浏览器。会话有效期为七天，重启服务后需重新登录。</p>
+      </section>
+    );
   return (
     <section className="panel settings-section connection-panel">
       <div className="settings-title">
@@ -333,12 +345,12 @@ export function BackupPanel() {
           <Database size={20} />
         </span>
         <div>
-          <h2>电脑自动备份</h2>
+          <h2>{session.remote ? "服务器自动备份" : "电脑自动备份"}</h2>
           <p>每次保存前留下快照，也可找回误删的项目。</p>
         </div>
       </div>
       <p className="field-hint">
-        业务数据存入电脑数据库；新增快照时保留最近最多 50 份、合计 32 MiB，
+        业务数据存入{session.remote ? "服务器" : "电脑"}数据库；新增快照时保留最近最多 50 份、合计 32 MiB，
         至少保留最新一份。另保留 30 个有保存记录日期的每日备份。
         仅业务数据，不含工程源码与执行日志；整机迁移请用完整备份。恢复前会再次备份当前状态。
       </p>
