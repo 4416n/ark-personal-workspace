@@ -165,10 +165,10 @@ export function FullBackupPanel() {
               <code className="backup-checksum">{preview.checksum}</code>
             </p>
             <div className="alert">
-              将替换当前业务、工程、日志与快照。请先关闭其他电脑窗口；手机需重新配对。模型配置保持不变。预览后有新修改或执行记录时会拒绝恢复，请重新校验。
+              将替换当前业务、工程、日志与快照。{session.remote ? "请先关闭其他工作台窗口；恢复后所有设备需重新登录。" : "请先关闭其他电脑窗口；手机需重新配对。"}模型配置保持不变。预览后有新修改或执行记录时会拒绝恢复，请重新校验。
             </div>
             <p>
-              当前完整备份会先保存到电脑的 <code>.local/full-backups/</code>
+              当前完整备份会先保存到{session.remote ? "服务器" : "电脑"}的 <code>.local/full-backups/</code>
               （自定义数据目录则在该目录下）。此文件不会自动清理。
             </p>
             {error && (

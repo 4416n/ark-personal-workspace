@@ -64,6 +64,8 @@ jobs:
         run: npx playwright test tests/browser/software.spec.ts --workers=1
       - name: Require real isolated interactive preview regression
         run: node --test --test-concurrency=1 tests/preview.integration.mjs
+      - name: Require real Docker rollout and automatic rollback
+        run: npm run test:autopilot
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -72,3 +74,42 @@ jobs:
             artifacts/
             test-results/
           retention-days: 7
+
+  container:
+    name: Production image and remote login
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Build production image
+        run: docker build --tag ark-workspace:test .
+      - name: Prepare temporary authentication and Compose validation
+        run: node scripts/container-smoke.mjs --prepare
+      - name: Validate production Compose configuration
+        env:
+          ARK_DOMAIN: ark.example.com
+        run: docker compose config --quiet
+      - name: Run isolated production container
+        run: >-
+          docker run --detach --name ark-smoke --read-only --tmpfs /tmp:size=128m
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --publish 127.0.0.1:5187:5173
+          --env ARK_PUBLIC_ORIGIN=http://127.0.0.1:5187
+          --env ARK_PASSWORD_HASH_FILE=/run/password.hash
+          --mount type=bind,src=${{ github.workspace }}/deploy/password.hash,dst=/run/password.hash,readonly
+          ark-workspace:test
+      - name: Verify health, login, saving and logout
+        run: node scripts/container-smoke.mjs
+      - name: Restart and verify persistent data
+        run: |
+          docker restart ark-smoke
+          node scripts/container-smoke.mjs --restored
+      - name: Show container logs
+        if: always()
+        run: docker logs ark-smoke
+      - name: Remove test container
+        if: always()
+        run: docker rm --force --volumes ark-smoke

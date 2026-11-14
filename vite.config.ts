@@ -11,7 +11,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: { markdown: ["react-markdown"], validation: ["zod"] },
+        manualChunks: { markdown: ["react-markdown"], validation: ["zod"], react: ["react", "react-dom", "react-dom/client"] },
       },
     },
   },

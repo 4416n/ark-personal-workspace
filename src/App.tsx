@@ -8,7 +8,6 @@ import {
   Sparkles,
   Settings,
   Search,
-  Bell,
   ChevronDown,
   ChevronRight,
   ArrowUpRight,
@@ -21,6 +20,8 @@ import {
   ClipboardCheck,
   ChartNoAxesCombined,
   Activity,
+  LogOut,
+  Rocket,
 } from "lucide-react";
 import { AppContext, type DialogState } from "./context";
 import { api, download, useWorkspace } from "./store";
@@ -35,10 +36,13 @@ import { Dialogs } from "./dialogs";
 import { ConnectionGate } from "./connectivity";
 import { RunsPage } from "./runs-ui";
 import { version } from "../package.json";
+import { NotificationCenter } from "./notifications-ui";
+import { AutopilotPage } from "./autopilot-ui";
 
 const nav = [
   { id: "dashboard", label: "办公室", icon: Building2 },
   { id: "projects", label: "目标拆解", icon: FolderKanban },
+  { id: "autopilot", label: "全自动交付", icon: Rocket },
   { id: "tasks", label: "任务看板", icon: ListTodo },
   { id: "decisions", label: "决策中心", icon: ClipboardCheck },
   { id: "analytics", label: "经营数据", icon: ChartNoAxesCombined },
@@ -76,7 +80,6 @@ export default function App() {
   } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [search, setSearch] = useState<string | null>(null);
-  const [activity, setActivity] = useState(false);
   const notify = (text: string, error = false) =>
     setToast({ text, error, id: Date.now() });
   const refreshConfig = async () => {
@@ -296,37 +299,20 @@ export default function App() {
                 </kbd>
               </button>
               <span className="topbar-divider" />
-              <div className="activity-wrapper">
-                <button
-                  className="icon-button notification-button"
-                  aria-label="查看工作台动态"
-                  onClick={() => setActivity(!activity)}
-                >
-                  <Bell size={19} />
-                  <i />
-                </button>
-                {activity && (
-                  <div className="activity-popover">
-                    <h4>
-                      工作台动态
-                      <button
-                        className="icon-button"
-                        aria-label="关闭动态"
-                        onClick={() => setActivity(false)}
-                      >
-                        <X size={16} />
-                      </button>
-                    </h4>
-                    {state.activity.slice(0, 6).map((a) => (
-                      <p key={a.id}>
-                        {a.text}
-                        <small>{new Date(a.at).toLocaleString("zh-CN")}</small>
-                      </p>
-                    ))}
-                    {!state.activity.length && <p>还没有新的动态</p>}
-                  </div>
-                )}
-              </div>
+              <NotificationCenter />
+              {session.remote && (
+                <button className="icon-button" aria-label="退出登录" onClick={async () => {
+                  try {
+                    await syncNow();
+                    await api("/auth/logout", {});
+                    for (const key of ["ark-workspace-v1", "ark-workspace-pending-v3", "ark-workspace-v1-before-server-migration"])
+                      localStorage.removeItem(key);
+                    location.reload();
+                  } catch (error) {
+                    notify((error as Error).message, true);
+                  }
+                }}><LogOut size={19} /></button>
+              )}
               <button
                 className="top-avatar"
                 aria-label="编辑个人资料"
@@ -416,6 +402,8 @@ export default function App() {
               <Assistant />
             ) : page === "runs" ? (
               <RunsPage />
+            ) : page === "autopilot" ? (
+              <AutopilotPage />
             ) : (
               <SettingsPage />
             )}
@@ -424,7 +412,7 @@ export default function App() {
             <span>
               <i />
               {session.shared ? status : "浏览器独立模式"} ·{" "}
-              {storageError ? "缓存异常" : "本地工作空间"}
+              {storageError ? "缓存异常" : session.remote ? "远程工作空间" : "本地工作空间"}
             </span>
             <span>
               你来决策，团队来协作。

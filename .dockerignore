@@ -1,0 +1,17 @@
+.git
+.github
+node_modules
+dist
+.local
+.env*
+deploy/password.hash
+deploy/*.hash
+artifacts
+test-results
+playwright-report
+tests
+docs/images
+*.log
+*.sqlite*
+*.db*
+*.arkbackup.gz

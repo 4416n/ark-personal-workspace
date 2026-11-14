@@ -51,6 +51,7 @@ type Build = {
   files: { path: string; bytes: number }[];
   validation: {
     passed: boolean;
+    driver?: string;
     unavailable?: boolean;
     checks: CheckResult[];
     logs: string;
@@ -400,7 +401,9 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
       <details className="software-environment">
         <summary>
           运行验证环境 ·{" "}
-          {cap
+          {build?.validation?.driver === "docker"
+            ? "本版使用 Docker 实测"
+            : cap
             ? cap.available
               ? "隔离环境就绪"
               : "不可用，只能交付未验证源码"
@@ -408,6 +411,7 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
               ? "检测失败，可重试"
               : "正在检测"}
         </summary>
+        {build?.validation?.driver === "docker" && <p>此版本由全自动交付的 Docker 验证器检查。下面是手动工程与交互预览所用 Linux 沙箱的独立诊断，不代表本版 Docker 测试结果。</p>}
         <p>{cap?.reason || "正在检查，不会在宿主机直接执行生成的代码。"}</p>
         <button
           className="button"
@@ -810,8 +814,10 @@ export function SoftwarePanel({ projectId }: { projectId: string }) {
             </h4>
             <p className="software-note">
               {build.validation?.scope || "未产生验证报告，不代表已经通过。"}{" "}
-              接口与存储映射由模型声明，随机测试数据由验证器生成；未声明的修改/硬删除不算覆盖。未做独立安全审计、Docker
-              镜像构建或公开部署验证。
+              接口与存储映射由模型声明，随机测试数据由验证器生成；未声明的修改/硬删除不算覆盖。
+              {build.validation?.driver === "docker"
+                ? "Docker 镜像构建结果见实际检查；当前运行地址和回滚状态见全自动交付。未做独立安全审计。"
+                : "未做独立安全审计、Docker 镜像构建或公开部署验证。"}
             </p>
             {build.validation?.checks.map((c, i) => (
               <details key={i}>

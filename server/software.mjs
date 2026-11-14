@@ -40,6 +40,8 @@ const startSchema = z.object({
   revision: z.number().int().min(1),
   maxRepairs: z.number().int().min(0).max(2),
   workflow: z.enum(["bundle", "staged"]).default("bundle"),
+  autonomous: z.boolean().default(false),
+  autonomousJobId: z.string().uuid().optional(),
   baseBuildId: z.string().uuid().nullable().optional(),
   maxTokens: z
     .union([z.literal(8192), z.literal(16384), z.literal(32768)])
@@ -71,6 +73,7 @@ export function softwareDelivery({
   isDocumentActive = () => false,
   validator = validateProject,
   capability = sandboxAvailable,
+  automaticValidator,
 }) {
   let active = null,
     closed = false;
@@ -173,7 +176,7 @@ export function softwareDelivery({
   };
   async function runValidation(build, control, number, finalize = true) {
     const started = Date.now();
-    const result = await validator(build.files, { signal: control.signal });
+    const result = await (build.autonomous && automaticValidator ? automaticValidator : validator)(build.files, { signal: control.signal });
     control.signal.throwIfAborted();
     const { screenshot, ...validation } = result;
     const passed = result.passed === true;
@@ -346,6 +349,8 @@ export function softwareDelivery({
     }
   }
   return {
+    wait: () => pending,
+    rawBuild: (id) => structuredClone(get(id)),
     capabilities,
     active: () =>
       active
@@ -409,6 +414,8 @@ export function softwareDelivery({
       const build = {
         id: randomUUID(),
         mode: "generate",
+        autonomous: options.autonomous,
+        autonomousJobId: options.autonomousJobId,
         projectId,
         title: input.project.title,
         baseBuildId: base?.id || null,
@@ -707,8 +714,9 @@ export function softwareDelivery({
         acceptance: b.acceptance || null,
         stages: b.pipeline?.stages || null,
         stale: details(b).stale,
-        notice:
-          "仅指定技术栈、声明测试与冒烟检查；部署文件已附带，但未构建Docker镜像、未上线，不保证所有业务/安全要求。",
+        notice: b.validation?.driver === "docker"
+          ? "Docker 镜像与声明测试的实际结果见本报告；运行地址、当前版本和回滚状态以全自动交付的部署记录为准。此报告不代表全部业务或安全要求通过。"
+          : "仅指定技术栈、声明测试与冒烟检查；部署文件已附带，但未构建Docker镜像、未上线，不保证所有业务/安全要求。",
       };
       return zipFiles([
         ...b.files,

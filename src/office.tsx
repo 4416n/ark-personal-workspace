@@ -21,6 +21,7 @@ import {
   Wifi,
   WifiOff,
   Crosshair,
+  Rocket,
 } from "lucide-react";
 import { useApp } from "./context";
 import { dateIn, dateLabel, projectProgress, type Member } from "./domain";
@@ -496,6 +497,10 @@ export function Office() {
             {config?.configured ? <Wifi size={13} /> : <WifiOff size={13} />}{" "}
             {config?.configured ? config.model : "离线规划模式"}
           </span>
+          <button
+            className="button"
+            onClick={() => navigate("autopilot")}
+          ><Rocket size={15} />全自动交付</button>
           <button
             className="button primary"
             onClick={() => open({ type: "project-new" })}

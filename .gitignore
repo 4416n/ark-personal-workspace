@@ -21,6 +21,7 @@ full-backups/
 *.log
 *.pem
 *.key
+deploy/*.hash
 
 # Local screenshots / browser test output (may contain user data)
 artifacts/
